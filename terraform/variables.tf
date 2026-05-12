@@ -43,6 +43,11 @@ variable "proxy_instance_type" {
   default = "t3.small"
 }
 
+variable "envoy_instance_type" {
+  type    = string
+  default = "t3.small"
+}
+
 variable "workload_instance_type" {
   type    = string
   default = "t3.micro"
