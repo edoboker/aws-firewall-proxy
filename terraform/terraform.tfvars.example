@@ -1,0 +1,20 @@
+# Copy this file to terraform.tfvars and adjust values before running terraform apply.
+
+aws_region        = "eu-north-1"
+availability_zone = "eu-north-1a"
+environment       = "dev"
+
+vpc_cidr             = "10.0.0.0/16"
+workload_subnet_cidr = "10.0.1.0/24"
+proxy_subnet_cidr    = "10.0.2.0/24"
+firewall_subnet_cidr = "10.0.3.0/24"
+public_subnet_cidr   = "10.0.4.0/24"
+
+proxy_instance_type    = "t3.small"
+workload_instance_type = "t3.micro"
+
+# FQDNs allowed through AWS Network Firewall (all others dropped)
+allowed_fqdns = [
+  "google.com",
+  "amazonaws.com"
+]

@@ -1,59 +1,71 @@
 variable "aws_region" {
-  type    = string
-  default = "us-east-1"
+  description = "AWS region for all resources"
+  type        = string
+  default     = "eu-north-1"
 }
 
 variable "availability_zone" {
-  type    = string
-  default = "us-east-1a"
+  description = "Single AZ for the deployment (must be within aws_region)"
+  type        = string
+  default     = "eu-north-1a"
 }
 
 variable "environment" {
-  type    = string
-  default = "dev"
+  description = "Environment name used as a prefix for resource naming"
+  type        = string
+  default     = "dev"
 }
 
 variable "vpc_cidr" {
-  type    = string
-  default = "10.0.0.0/16"
+  description = "CIDR block for the VPC"
+  type        = string
+  default     = "10.0.0.0/16"
 }
 
 variable "workload_subnet_cidr" {
-  type    = string
-  default = "10.0.1.0/24"
+  description = "CIDR block for the workload subnet"
+  type        = string
+  default     = "10.0.1.0/24"
 }
 
 variable "proxy_subnet_cidr" {
-  type    = string
-  default = "10.0.2.0/24"
+  description = "CIDR block for the proxy subnet"
+  type        = string
+  default     = "10.0.2.0/24"
 }
 
 variable "firewall_subnet_cidr" {
-  type    = string
-  default = "10.0.3.0/24"
+  description = "CIDR block for the firewall subnet (ANF endpoint)"
+  type        = string
+  default     = "10.0.3.0/24"
 }
 
 variable "public_subnet_cidr" {
-  type    = string
-  default = "10.0.4.0/24"
+  description = "CIDR block for the public subnet (NAT Gateway)"
+  type        = string
+  default     = "10.0.4.0/24"
 }
 
 variable "proxy_instance_type" {
-  type    = string
-  default = "t3.small"
+  description = "EC2 instance type for the nginx proxy"
+  type        = string
+  default     = "t3.small"
 }
 
 variable "envoy_instance_type" {
-  type    = string
-  default = "t3.small"
+  description = "EC2 instance type for the Envoy proxy"
+  type        = string
+  default     = "t3.small"
 }
 
 variable "workload_instance_type" {
-  type    = string
-  default = "t3.micro"
+  description = "EC2 instance type for the workload client"
+  type        = string
+  default     = "t3.micro"
 }
 
 variable "allowed_fqdns" {
-  type    = list(string)
-  default = ["google.com", "amazonaws.com"]
+  description = "FQDNs allowed through the network firewall (matched with dotprefix for subdomain safety)"
+  type        = list(string)
+  default     = ["google.com", "amazonaws.com"]
 }

@@ -2,7 +2,7 @@
 
 resource "aws_security_group" "eic_endpoint" {
   name        = "${local.name}-eic-sg"
-  description = "EC2 Instance Connect Endpoint - outbound SSH to proxy and workload"
+  description = "EC2 Instance Connect Endpoint - outbound SSH to proxy"
   vpc_id      = aws_vpc.main.id
 
   egress {
@@ -34,7 +34,7 @@ resource "aws_ec2_instance_connect_endpoint" "proxy" {
 
 resource "aws_security_group" "proxy" {
   name        = "${local.name}-nginx-sg"
-  description = "nginx proxy EC2 - transparent TLS proxy"
+  description = "Proxy EC2 - nginx transparent proxy"
   vpc_id      = aws_vpc.main.id
 
   # SG is evaluated before iptables REDIRECT, so allow TCP 443 (not 8443) from workload
@@ -66,7 +66,8 @@ resource "aws_instance" "proxy" {
   instance_type          = var.proxy_instance_type
   subnet_id              = aws_subnet.proxy.id
   vpc_security_group_ids = [aws_security_group.proxy.id]
-  source_dest_check      = false
+  source_dest_check              = false
+  associate_public_ip_address    = false
 
   user_data_base64 = base64encode(<<-EOF
     #!/bin/bash
@@ -81,40 +82,11 @@ resource "aws_instance" "proxy" {
 
     # Write nginx config
     cat > /etc/nginx/nginx.conf << 'NGINXCONF'
-load_module /usr/lib64/nginx/modules/ngx_stream_module.so;
-
-user nginx;
-worker_processes auto;
-error_log /var/log/nginx/error.log warn;
-pid /var/run/nginx.pid;
-
-events {
-    worker_connections 1024;
-}
-
-stream {
-    resolver 169.254.169.253 valid=30s ipv6=off;
-    resolver_timeout 5s;
-
-    log_format proxy '$remote_addr [$time_local] $protocol $status '
-                     '$bytes_sent $bytes_received $session_time '
-                     '"$ssl_preread_server_name"';
-    access_log /var/log/nginx/access.log proxy;
-
-    server {
-        listen 8443;
-        ssl_preread on;
-        proxy_pass $ssl_preread_server_name:443;
-        proxy_connect_timeout 10s;
-        proxy_timeout 600s;
-    }
-}
+${file("${path.module}/configs/nginx.conf")}
 NGINXCONF
 
-    # iptables: redirect inbound TCP:443 to nginx, exclude nginx's own outbound
-    NGINX_UID=$(id -u nginx)
+    # iptables: redirect inbound TCP:443 to nginx
     iptables -t nat -A PREROUTING -p tcp --dport 443 -j REDIRECT --to-port 8443
-    iptables -t nat -A OUTPUT -p tcp --dport 443 -m owner --uid-owner $NGINX_UID -j RETURN
 
     systemctl enable nginx
     systemctl start nginx

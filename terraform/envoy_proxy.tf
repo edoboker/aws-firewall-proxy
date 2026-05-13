@@ -1,5 +1,7 @@
 # ── Envoy Proxy — EC2 in the proxy subnet ────────────────────────────────────
-# Route table wiring is done manually — this file only provisions the instance.
+# Alternative proxy implementation using Envoy's SNI dynamic forward proxy.
+# To activate, update the workload route table to point to this instance's ENI
+# instead of the nginx proxy. Only one proxy should be routed at a time.
 
 resource "aws_security_group" "envoy" {
   name        = "${local.name}-envoy-sg"
@@ -35,7 +37,8 @@ resource "aws_instance" "envoy" {
   instance_type          = var.envoy_instance_type
   subnet_id              = aws_subnet.proxy.id
   vpc_security_group_ids = [aws_security_group.envoy.id]
-  source_dest_check      = false
+  source_dest_check              = false
+  associate_public_ip_address    = false
 
   user_data_base64 = base64encode(<<-EOF
     #!/bin/bash
@@ -46,7 +49,7 @@ resource "aws_instance" "envoy" {
     sysctl -p /etc/sysctl.d/99-proxy.conf
 
     # Install envoy
-    dnf install -y curl
+    dnf install -y curl iptables-services
     ENVOY_VERSION="1.32.2"
     curl -fL -o /usr/local/bin/envoy \
       "https://github.com/envoyproxy/envoy/releases/download/v$${ENVOY_VERSION}/envoy-$${ENVOY_VERSION}-linux-x86_64"
@@ -55,92 +58,10 @@ resource "aws_instance" "envoy" {
     mkdir -p /etc/envoy /var/log/envoy
 
     cat > /etc/envoy/envoy.yaml << 'ENVOYCONF'
-static_resources:
-  listeners:
-  - name: tls_sni_rebind_listener
-    address:
-      socket_address:
-        address: 0.0.0.0
-        port_value: 8443
-
-    listener_filters:
-    - name: envoy.filters.listener.original_dst
-      typed_config:
-        "@type": type.googleapis.com/envoy.extensions.filters.listener.original_dst.v3.OriginalDst
-
-    - name: envoy.filters.listener.tls_inspector
-      typed_config:
-        "@type": type.googleapis.com/envoy.extensions.filters.listener.tls_inspector.v3.TlsInspector
-
-    filter_chains:
-    - filters:
-      - name: envoy.filters.network.sni_dynamic_forward_proxy
-        typed_config:
-          "@type": type.googleapis.com/envoy.extensions.filters.network.sni_dynamic_forward_proxy.v3.FilterConfig
-          port_value: 443
-          dns_cache_config:
-            name: sni_dns_cache
-            dns_lookup_family: V4_ONLY
-            typed_dns_resolver_config:
-              name: envoy.network.dns_resolver.cares
-              typed_config:
-                "@type": type.googleapis.com/envoy.extensions.network.dns_resolver.cares.v3.CaresDnsResolverConfig
-                resolvers:
-                - socket_address:
-                    address: 169.254.169.253
-                    port_value: 53
-
-      - name: envoy.filters.network.tcp_proxy
-        typed_config:
-          "@type": type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy
-          stat_prefix: sni_tcp_proxy
-          cluster: sni_dynamic_forward_proxy_cluster
-          access_log:
-          - name: envoy.access_loggers.file
-            typed_config:
-              "@type": type.googleapis.com/envoy.extensions.access_loggers.file.v3.FileAccessLog
-              path: /var/log/envoy/sni-egress.log
-              log_format:
-                text_format: >
-                  downstream=%DOWNSTREAM_REMOTE_ADDRESS%
-                  local=%DOWNSTREAM_LOCAL_ADDRESS%
-                  requested_sni=%REQUESTED_SERVER_NAME%
-                  upstream=%UPSTREAM_REMOTE_ADDRESS%
-                  upstream_host=%UPSTREAM_HOST%
-                  response_flags=%RESPONSE_FLAGS%
-                  bytes_rx=%BYTES_RECEIVED%
-                  bytes_tx=%BYTES_SENT%
-                  duration_ms=%DURATION%
-                  start=%START_TIME%
-                  \n
-
-  clusters:
-  - name: sni_dynamic_forward_proxy_cluster
-    lb_policy: CLUSTER_PROVIDED
-    cluster_type:
-      name: envoy.clusters.dynamic_forward_proxy
-      typed_config:
-        "@type": type.googleapis.com/envoy.extensions.clusters.dynamic_forward_proxy.v3.ClusterConfig
-        dns_cache_config:
-          name: sni_dns_cache
-          dns_lookup_family: V4_ONLY
-          typed_dns_resolver_config:
-            name: envoy.network.dns_resolver.cares
-            typed_config:
-              "@type": type.googleapis.com/envoy.extensions.network.dns_resolver.cares.v3.CaresDnsResolverConfig
-              resolvers:
-              - socket_address:
-                  address: 169.254.169.253
-                  port_value: 53
-
-admin:
-  address:
-    socket_address:
-      address: 127.0.0.1
-      port_value: 9901
+${file("${path.module}/configs/envoy.yaml")}
 ENVOYCONF
 
-    # Dedicated user so iptables OUTPUT exception can match by UID
+    # Dedicated user for least-privilege service execution
     useradd -r -s /sbin/nologin envoy
     chown -R envoy:envoy /etc/envoy /var/log/envoy
 
@@ -159,10 +80,9 @@ Restart=on-failure
 WantedBy=multi-user.target
 SERVICE
 
-    # iptables: redirect inbound TCP:443 to envoy, exclude envoy's own outbound
-    ENVOY_UID=$(id -u envoy)
+    # iptables: redirect inbound TCP:443 to envoy
+    # No OUTPUT rule needed — PREROUTING does not affect locally-generated traffic
     iptables -t nat -A PREROUTING -p tcp --dport 443 -j REDIRECT --to-port 8443
-    iptables -t nat -A OUTPUT -p tcp --dport 443 -m owner --uid-owner $ENVOY_UID -j RETURN
 
     systemctl daemon-reload
     systemctl enable envoy
