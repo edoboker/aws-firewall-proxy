@@ -18,6 +18,13 @@ locals {
     for idx, fqdn in var.allowed_fqdns :
     "pass tls ${var.vpc_cidr} any -> $EXTERNAL_NET 443 (tls.sni; dotprefix; content:\".${fqdn}\"; endswith; nocase; msg:\"allow ${fqdn}\"; sid:${1000 + idx}; rev:1;)"
   ])
+
+  # Extract the ANF endpoint ID for the single AZ deployment
+  anf_endpoint_id = [
+    for ss in aws_networkfirewall_firewall.main.firewall_status[0].sync_states :
+    ss.attachment[0].endpoint_id
+    if ss.availability_zone == var.availability_zone
+  ][0]
 }
 
 resource "aws_networkfirewall_rule_group" "fqdn_allowlist" {
@@ -84,11 +91,3 @@ resource "aws_networkfirewall_logging_configuration" "main" {
   }
 }
 
-locals {
-  # Extract the ANF endpoint ID for the single AZ deployment
-  anf_endpoint_id = [
-    for ss in aws_networkfirewall_firewall.main.firewall_status[0].sync_states :
-    ss.attachment[0].endpoint_id
-    if ss.availability_zone == var.availability_zone
-  ][0]
-}

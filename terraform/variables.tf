@@ -67,5 +67,5 @@ variable "workload_instance_type" {
 variable "allowed_fqdns" {
   description = "FQDNs allowed through the network firewall (matched with dotprefix for subdomain safety)"
   type        = list(string)
-  default     = ["google.com", "amazonaws.com"]
+  default     = ["google.com", "amazonaws.com", "cdn.amazonlinux.com"]
 }

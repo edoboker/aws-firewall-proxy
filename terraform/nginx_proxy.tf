@@ -39,6 +39,7 @@ resource "aws_security_group" "proxy" {
 
   # SG is evaluated before iptables REDIRECT, so allow TCP 443 (not 8443) from workload
   ingress {
+    description = "TLS from workload subnet"
     from_port   = 443
     to_port     = 443
     protocol    = "tcp"
@@ -62,12 +63,12 @@ resource "aws_security_group" "proxy" {
 }
 
 resource "aws_instance" "proxy" {
-  ami                    = data.aws_ssm_parameter.al2023_ami.value
-  instance_type          = var.proxy_instance_type
-  subnet_id              = aws_subnet.proxy.id
-  vpc_security_group_ids = [aws_security_group.proxy.id]
-  source_dest_check              = false
-  associate_public_ip_address    = false
+  ami                         = data.aws_ssm_parameter.al2023_ami.value
+  instance_type               = var.proxy_instance_type
+  subnet_id                   = aws_subnet.proxy.id
+  vpc_security_group_ids      = [aws_security_group.proxy.id]
+  source_dest_check           = false
+  associate_public_ip_address = false
 
   user_data_base64 = base64encode(<<-EOF
     #!/bin/bash
@@ -81,9 +82,7 @@ resource "aws_instance" "proxy" {
     dnf install -y nginx nginx-mod-stream iptables-services
 
     # Write nginx config
-    cat > /etc/nginx/nginx.conf << 'NGINXCONF'
-${file("${path.module}/configs/nginx.conf")}
-NGINXCONF
+    echo '${base64encode(file("${path.module}/configs/nginx.conf"))}' | base64 -d > /etc/nginx/nginx.conf
 
     # iptables: redirect inbound TCP:443 to nginx
     iptables -t nat -A PREROUTING -p tcp --dport 443 -j REDIRECT --to-port 8443

@@ -10,6 +10,7 @@ resource "aws_security_group" "envoy" {
 
   # SG is evaluated before iptables REDIRECT, so allow TCP 443 (not 8443) from workload
   ingress {
+    description = "TLS from workload subnet"
     from_port   = 443
     to_port     = 443
     protocol    = "tcp"
@@ -33,12 +34,12 @@ resource "aws_security_group" "envoy" {
 }
 
 resource "aws_instance" "envoy" {
-  ami                    = data.aws_ssm_parameter.al2023_ami.value
-  instance_type          = var.envoy_instance_type
-  subnet_id              = aws_subnet.proxy.id
-  vpc_security_group_ids = [aws_security_group.envoy.id]
-  source_dest_check              = false
-  associate_public_ip_address    = false
+  ami                         = data.aws_ssm_parameter.al2023_ami.value
+  instance_type               = var.envoy_instance_type
+  subnet_id                   = aws_subnet.proxy.id
+  vpc_security_group_ids      = [aws_security_group.envoy.id]
+  source_dest_check           = false
+  associate_public_ip_address = false
 
   user_data_base64 = base64encode(<<-EOF
     #!/bin/bash
@@ -57,9 +58,7 @@ resource "aws_instance" "envoy" {
 
     mkdir -p /etc/envoy /var/log/envoy
 
-    cat > /etc/envoy/envoy.yaml << 'ENVOYCONF'
-${file("${path.module}/configs/envoy.yaml")}
-ENVOYCONF
+    echo '${base64encode(file("${path.module}/configs/envoy.yaml"))}' | base64 -d > /etc/envoy/envoy.yaml
 
     # Dedicated user for least-privilege service execution
     useradd -r -s /sbin/nologin envoy
