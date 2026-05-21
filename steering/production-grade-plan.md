@@ -39,6 +39,8 @@ Focus on logging, metrics, and observability of the proxy. Measure KPIs such as:
 - Detected attacks
 - Repeating FQDNs / SNIs
 
+For observability, the proxy should use a deliberately minimal CloudWatch footprint: ship only nginx error.log and a sparse structured security-events log for block/mismatch/suspicious cases, both with 3-day retention, and avoid per-request access logging or verbose resolved-IP logging because CloudWatch Logs ingestion dominates cost while short-retention storage is negligible. Operational visibility should come primarily from a small set of aggregated metrics published every 60 seconds — for example requests, blocked requests, upstream failures, TLS handshake failures, P95 request time, and active connections — plus a basic dashboard and a few alarms for latency, failures, suspicious-event spikes, and proxy health. This gives enough signal for production-style monitoring without turning CloudWatch into an expensive request-by-request telemetry sink.
+
 ## 8. DR / failover runbooks and service self-healing
 
 Document what happens when both AZs lose the proxy, and the recovery path. Beyond the runbook, build self-healing into the service itself — health checks that auto-replace unhealthy instances, ASG-level remediation, etc. — so the runbook is the last resort, not the first.

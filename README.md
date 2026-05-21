@@ -114,7 +114,22 @@ aws ssm put-parameter \
 
 The ANF rule group is still managed by Terraform (`var.allowed_fqdns`) — the two allowlists are independent.
 
-### 6. Tear down
+### 6. Run the benchmark (optional)
+
+The benchmark runner in `benchmark/` accepts an optional UTF-8 YAML config
+for the probe duration, concurrency, target FQDN, results directory, and
+route-swap timing:
+
+```bash
+cp benchmark/config.example.yaml benchmark/config.yaml
+python benchmark/run.py --config benchmark/config.yaml
+# CLI flags still override YAML values:
+python benchmark/run.py --config benchmark/config.yaml --fqdn google.com
+```
+
+See `benchmark/README.md` for the full benchmark workflow and config schema.
+
+### 7. Tear down
 
 ```bash
 cd terraform && terraform destroy

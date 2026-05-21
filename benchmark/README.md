@@ -1,89 +1,106 @@
 # benchmark
 
-Measures **added latency** introduced by the transparent SNI proxy and the
-**max sustained RPS** the current single-AZ nginx proxy can serve for an
-allowed HTTPS FQDN.
+Measures the added latency introduced by the transparent SNI proxy and the
+max sustained RPS the current single-AZ nginx proxy can serve for an allowed
+HTTPS FQDN.
 
-## Scope (read this first)
+## Scope
 
-This benchmark is **deliberately small and partial.** Its purpose is to
-showcase methodology and produce a representative number — not to
-exhaustively characterize nginx-stream throughput, the ANF data plane,
-or NAT GW. The narrow scope is a **cost decision**, not a technical one.
+This benchmark is deliberately small and partial. Its job is to demonstrate
+methodology and produce representative numbers, not to exhaustively
+characterize nginx-stream throughput, the ANF data plane, or NAT Gateway.
 
-Concretely, each run holds the following constant:
+Each run holds the following constant by default:
 
 - 1 target FQDN, 1 AZ, 1 proxy instance, 1 client instance
-- HEAD requests only (headers-only payloads ≈ a few hundred bytes each)
-- 20 s latency probe at c=4, plus 30 s max-RPS run at c=50
-- Estimated data through ANF+NAT per run: under ~200 MB → < $0.03 in
-  data-processing charges (excludes EC2 instance-hours, which exist
-  whether or not the benchmark runs)
+- HEAD requests only
+- 5 s latency probe at c=2, plus 5 s max-RPS run at c=50
+- Estimated data through ANF+NAT stays well under ~200 MB per run, which keeps data-processing charges around a few cents
 
 A production-grade benchmark would expand every one of those dimensions
-(longer durations, multiple AZs, multiple target FQDNs, mixed payload
-sizes, hot/cold cache split — see `steering/production-grade-plan.md` §3).
-That work is intentionally deferred to keep total spend per run under ~$0.10
-in this take-home environment.
+(longer durations, multiple AZs, multiple FQDNs, mixed payload sizes, and a
+hot/cold cache split). That work is intentionally deferred in this repo to
+keep the benchmark cheap to run.
 
 ## What it measures
 
-Two scenarios, run back to back against the same target:
+Two scenarios run back to back against the same target:
 
-1. `proxy` — current routing: workload → nginx proxy → ANF → NAT → internet
-2. `baseline` — workload's default route is repointed at the ANF VPC
-   endpoint directly, removing the proxy hop: workload → ANF → NAT →
-   internet
+1. `proxy`: workload -> nginx proxy -> ANF -> NAT -> internet
+2. `baseline`: workload -> ANF -> NAT -> internet
 
-`added_latency = proxy.latency − baseline.latency` (reported at p50/p95/p99).
-`max_rps_proxy` is the second scenario's high-concurrency throughput number.
+The script reports `added_latency = proxy.latency - baseline.latency` at
+p50/p95/p99 and also records the high-concurrency RPS numbers for each
+scenario.
 
 ## How it works
 
-`run.py` runs on the operator's laptop. It:
+`run.py` runs on the operator workstation. It:
 
 1. Loads `terraform output -json` via the shared helper in `common/`.
-2. Sanity-checks that `hey` is on the workload (it's baked into the
-   `aws-firewall-proxy-workload` AMI). Fails fast if missing.
-3. Runs `hey -m HEAD -z … -c …` on the workload via SSM Run Command.
-4. Calls `ec2:ReplaceRoute` to swap the workload default route from the
-   proxy ENI to the ANF VPC endpoint. **Polls** `describe-route-tables`
-   until the change is reflected — no fixed sleeps.
-5. Reruns `hey` for the baseline scenario.
-6. Restores the route to the proxy ENI in a `try/finally`. If the restore
-   fails for any reason, prints the exact `aws ec2 replace-route` command
-   needed for manual recovery.
-7. Writes `results/<UTC-timestamp>/raw.json` and `summary.md`.
+2. Verifies that `hey` is already baked into the workload AMI.
+3. Runs `hey -m HEAD -z ... -c ...` on the workload through SSM Run Command.
+4. Swaps the workload default route from the proxy ENI to the ANF VPC endpoint.
+5. Polls `describe-route-tables` until the route change is visible.
+6. Reruns `hey` for the no-proxy baseline.
+7. Restores the route to the proxy ENI in a `try/finally`.
+8. Writes `results/<UTC-timestamp>/raw.json` and `summary.md` in UTF-8.
 
 ## Prerequisites
 
-- `terraform apply` in `../terraform/` has succeeded, and the `workload`
-  instance is running the workload golden AMI (with `hey` baked in).
-  Build that AMI once:
+- `terraform apply` in `../terraform/` has succeeded, and the workload
+  instance is running the workload golden AMI with `hey` baked in. Build
+  that AMI once:
   ```bash
   cd packer/workload
-  packer init . && packer build -var "git_sha=$(git rev-parse --short HEAD)" .
-  cd ../../terraform && terraform apply
+  packer init .
+  packer build -var "git_sha=$(git rev-parse --short HEAD)" .
+  cd ../../terraform
+  terraform apply
   ```
 - AWS credentials with `ssm:SendCommand`, `ssm:GetCommandInvocation`,
-  `ec2:DescribeRouteTables`, `ec2:ReplaceRoute`.
-- Python deps from the repo root: `pip install -e .` (installs the
-  `common` package plus `boto3`).
+  `ec2:DescribeRouteTables`, and `ec2:ReplaceRoute`.
+- Python deps from the repo root: `pip install -e .` (installs `boto3`,
+  `PyYAML`, and the shared `common` package).
+
+## YAML config
+
+`run.py` accepts an optional UTF-8 YAML file for benchmark knobs and target
+selection. Start from the example:
+
+```bash
+cp benchmark/config.example.yaml benchmark/config.yaml
+```
+
+Supported keys:
+
+- `fqdn`
+- `results_dir`
+- `latency.duration_s`
+- `latency.concurrency`
+- `rps.duration_s`
+- `rps.concurrency`
+- `route_swap.timeout_s`
+- `route_swap.poll_interval_s`
+
+CLI flags override YAML values. If `results_dir` is relative in the YAML file,
+it is resolved relative to the YAML file's directory.
 
 ## Run
 
 ```bash
 python benchmark/run.py
-# or: python benchmark/run.py --fqdn google.com --results-dir ./out
+python benchmark/run.py --config benchmark/config.yaml
+python benchmark/run.py --config benchmark/config.yaml --fqdn google.com --results-dir ./out
 ```
 
-Results land in `benchmark/results/<UTC-timestamp>/{raw.json,summary.md}`.
+Results land in `benchmark/results/<UTC-timestamp>/{raw.json,summary.md}` by
+default.
 
-## Recovery — if the script crashes mid-run
+## Recovery
 
-The `try/finally` should always restore the route. If it doesn't (e.g. the
-process is killed between the swap and the restore), the workload will have
-no egress through the proxy. Restore manually:
+The `try/finally` should restore the route automatically. If the process is
+killed between the swap and the restore, recover manually:
 
 ```bash
 aws ec2 replace-route \
@@ -95,6 +112,7 @@ aws ec2 replace-route \
 
 ## Files
 
-- `run.py` — orchestrator
-- `results/.gitignore` — ignore generated runs; sample is committed
-- `results/sample/summary.md` — small example of the report format
+- `run.py`: orchestrator
+- `config.example.yaml`: sample config for benchmark knobs
+- `results/.gitignore`: ignores generated benchmark runs
+- `results/sample/summary.md`: small example of the report format

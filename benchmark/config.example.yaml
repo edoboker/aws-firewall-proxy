@@ -1,0 +1,15 @@
+# Optional benchmark overrides. Relative paths resolve from this file.
+fqdn: google.com
+results_dir: ./results
+
+latency:
+  duration_s: 5
+  concurrency: 2
+
+rps:
+  duration_s: 5
+  concurrency: 50
+
+route_swap:
+  timeout_s: 30
+  poll_interval_s: 1.0
