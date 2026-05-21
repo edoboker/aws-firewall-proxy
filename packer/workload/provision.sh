@@ -15,7 +15,7 @@ dnf install -y jq
 # build of hey that has not changed in years. If you want supply-chain
 # integrity, compute the hash once and add `echo "$SHA  /usr/local/bin/hey" |
 # sha256sum -c -`.
-HEY_URL="https://hey-release.s3.us-east-2.amazonaws.com/hey_linux_amd64"
+HEY_URL="https://storage.googleapis.com/hey-releases/hey_linux_amd64"
 
 curl -fsSL "$HEY_URL" -o /usr/local/bin/hey
 chmod 0755 /usr/local/bin/hey
