@@ -63,10 +63,13 @@ locals {
 resource "aws_vpc_endpoint" "ssm" {
   for_each = toset(local.ssm_endpoint_services)
 
-  vpc_id              = aws_vpc.main.id
-  service_name        = "com.amazonaws.${var.aws_region}.${each.key}"
-  vpc_endpoint_type   = "Interface"
-  subnet_ids          = [aws_subnet.workload.id, aws_subnet.proxy.id]
+  vpc_id            = aws_vpc.main.id
+  service_name      = "com.amazonaws.${var.aws_region}.${each.key}"
+  vpc_endpoint_type = "Interface"
+  # Single-AZ deployment: workload and proxy subnets are in the same AZ, and
+  # interface endpoints require one subnet per AZ. One ENI is enough — the
+  # implicit VPC-local route makes it reachable from every subnet.
+  subnet_ids          = [aws_subnet.workload.id]
   security_group_ids  = [aws_security_group.ssm_endpoints.id]
   private_dns_enabled = true
 
