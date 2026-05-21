@@ -13,25 +13,54 @@ Parameter Store every 60s.
 
 ## Build
 
+Stand up the shared build VPC once (see `packer/build-infra/main.tf`), then
+feed its outputs to packer.
+
+**Bash / zsh:**
+
 ```bash
-cd packer/nginx-proxy
+cd packer/build-infra && terraform init && terraform apply
+cd ../nginx-proxy
 packer init .
 packer build \
   -var "git_sha=$(git rev-parse --short HEAD)" \
+  -var "packer_vpc_id=$(terraform -chdir=../build-infra output -raw vpc_id)" \
+  -var "packer_subnet_id=$(terraform -chdir=../build-infra output -raw subnet_id)" \
   .
 ```
 
-If the account has no default VPC (typical for newer AWS Organizations), Packer cannot create the temporary build security group. Either create a default VPC once with `aws ec2 create-default-vpc --region eu-north-1`, or pass an existing VPC and a public subnet:
+**PowerShell** (Windows):
 
-```bash
-packer build \
-  -var "git_sha=$(git rev-parse --short HEAD)" \
-  -var "vpc_id=vpc-xxxxxxxx" \
-  -var "subnet_id=subnet-xxxxxxxx" \
+```powershell
+cd packer\build-infra; terraform init; terraform apply
+cd ..\nginx-proxy
+packer init .
+packer build `
+  -var "git_sha=$(git rev-parse --short HEAD)" `
+  -var "packer_vpc_id=$(terraform -chdir=../build-infra output -raw vpc_id)" `
+  -var "packer_subnet_id=$(terraform -chdir=../build-infra output -raw subnet_id)" `
   .
 ```
 
-The subnet must route to the internet (IGW or NAT) so Packer can SSH in and `dnf` can fetch packages.
+**Windows `cmd.exe`** (no `$(...)` expansion — pre-resolve into env vars):
+
+```cmd
+cd packer\build-infra
+terraform init && terraform apply
+for /f "delims=" %i in ('terraform output -raw vpc_id') do @set PACKER_VPC_ID=%i
+for /f "delims=" %i in ('terraform output -raw subnet_id') do @set PACKER_SUBNET_ID=%i
+for /f "delims=" %i in ('git rev-parse --short HEAD') do @set GIT_SHA=%i
+cd ..\nginx-proxy
+packer init .
+packer build -var "git_sha=%GIT_SHA%" -var "packer_vpc_id=%PACKER_VPC_ID%" -var "packer_subnet_id=%PACKER_SUBNET_ID%" .
+```
+
+`-chdir=` is avoided (cmd's `for /f` mangles `=` inside the inner command),
+so we capture the terraform outputs from inside `build-infra`, then `cd`
+to the nginx-proxy AMI dir and build.
+
+If you have a default VPC in the account and prefer to use it, omit the
+`packer_vpc_id`/`packer_subnet_id` vars — packer falls back to the default VPC.
 
 The resulting AMI is tagged `Name=aws-firewall-proxy-nginx`. Terraform finds
 it via `data "aws_ami" "nginx_proxy"` (most-recent matching tag).

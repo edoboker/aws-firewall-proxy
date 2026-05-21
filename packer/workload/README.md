@@ -13,23 +13,54 @@ installation.
 
 ## Build
 
+Stand up the shared build VPC once (see `packer/build-infra/main.tf`), then
+feed its outputs to packer.
+
+**Bash / zsh:**
+
 ```bash
-cd packer/workload
+cd packer/build-infra && terraform init && terraform apply
+cd ../workload
 packer init .
 packer build \
   -var "git_sha=$(git rev-parse --short HEAD)" \
+  -var "packer_vpc_id=$(terraform -chdir=../build-infra output -raw vpc_id)" \
+  -var "packer_subnet_id=$(terraform -chdir=../build-infra output -raw subnet_id)" \
   .
 ```
 
-If the account has no default VPC, pass an existing VPC + public subnet:
+**PowerShell** (Windows):
 
-```bash
-packer build \
-  -var "git_sha=$(git rev-parse --short HEAD)" \
-  -var "vpc_id=vpc-xxxxxxxx" \
-  -var "subnet_id=subnet-xxxxxxxx" \
+```powershell
+cd packer\build-infra; terraform init; terraform apply
+cd ..\workload
+packer init .
+packer build `
+  -var "git_sha=$(git rev-parse --short HEAD)" `
+  -var "packer_vpc_id=$(terraform -chdir=../build-infra output -raw vpc_id)" `
+  -var "packer_subnet_id=$(terraform -chdir=../build-infra output -raw subnet_id)" `
   .
 ```
+
+**Windows `cmd.exe`** (no `$(...)` expansion — pre-resolve into env vars):
+
+```cmd
+cd packer\build-infra
+terraform init && terraform apply
+for /f "delims=" %i in ('terraform output -raw vpc_id') do @set PACKER_VPC_ID=%i
+for /f "delims=" %i in ('terraform output -raw subnet_id') do @set PACKER_SUBNET_ID=%i
+for /f "delims=" %i in ('git rev-parse --short HEAD') do @set GIT_SHA=%i
+cd ..\workload
+packer init .
+packer build -var "git_sha=%GIT_SHA%" -var "packer_vpc_id=%PACKER_VPC_ID%" -var "packer_subnet_id=%PACKER_SUBNET_ID%" .
+```
+
+`-chdir=` is avoided (cmd's `for /f` mangles `=` inside the inner command),
+so we capture the terraform outputs from inside `build-infra`, then `cd`
+to the workload AMI dir and build.
+
+If you have a default VPC in the account and prefer to use it, omit the
+`packer_vpc_id`/`packer_subnet_id` vars — packer falls back to the default VPC.
 
 The resulting AMI is tagged `Name=aws-firewall-proxy-workload`. Terraform
 finds it via `data "aws_ami" "workload"` (most-recent matching tag).
