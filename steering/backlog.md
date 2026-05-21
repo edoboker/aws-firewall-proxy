@@ -1,3 +1,5 @@
 1. Important limitation: stock open-source NGINX is not historically a full HTTP CONNECT forward proxy out of the box. Official HTTP CONNECT forward proxy support is documented for NGINX Plus R36+. Open-source deployments often use third-party CONNECT modules, Squid, Envoy, HAProxy, or egress-gateway patterns instead.
-2. envoy vs nginx
-3. subsequent dns tunnelling issue!
+2. find solution for HTTP/2 connection coalescing — clients reusing an h2 connection for sibling hostnames covered by the same cert may hit `421 Misdirected Request` when the proxy locked the upstream to the SNI-resolved IP.
+3. find solution for idle long-lived stream timeouts — gRPC server-streams, SSE, and WebSocket connections exceeding `proxy_timeout 600s` get cut. Needs per-workload tuning or keepalive injection.
+4. find solution for CDN edge selection from proxy DNS view — proxy's resolver lookups may steer to a different edge than the workload would have chosen directly. Only relevant if scope is extended beyond single-region in-VPC use.
+5. find solution for source-IP collapse at origin — all workloads appear as the proxy IP. Affects per-client rate limiting at the origin, sticky-LB hotspots, and audit-log granularity.
