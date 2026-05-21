@@ -3,7 +3,7 @@ import subprocess
 from functools import lru_cache
 from pathlib import Path
 
-TERRAFORM_DIR = Path(__file__).resolve().parents[2] / "terraform"
+TERRAFORM_DIR = Path(__file__).resolve().parents[1] / "terraform"
 
 
 @lru_cache(maxsize=1)

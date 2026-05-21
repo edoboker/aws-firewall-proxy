@@ -1,6 +1,6 @@
 import pytest
 
-from helpers.ssm import ssm_exec
+from common.ssm import ssm_exec
 
 
 @pytest.fixture(scope="session")

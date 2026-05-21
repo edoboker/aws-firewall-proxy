@@ -1,6 +1,6 @@
 import pytest
 
-from helpers import tf_outputs
+from common import tf_outputs
 
 
 @pytest.fixture(scope="session")

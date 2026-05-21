@@ -4,9 +4,12 @@ version = "0.1.0"
 description = "Integration tests for the transparent SNI proxy."
 requires-python = ">=3.10"
 dependencies = [
-    "boto3>=1.34",
+    "aws-firewall-proxy",
     "pytest>=8.0",
 ]
+
+[tool.uv.sources]
+aws-firewall-proxy = { path = "..", editable = true }
 
 [tool.pytest.ini_options]
 testpaths = ["."]

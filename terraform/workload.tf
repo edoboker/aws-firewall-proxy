@@ -22,7 +22,7 @@ resource "aws_security_group" "workload" {
 }
 
 resource "aws_instance" "workload" {
-  ami                         = data.aws_ssm_parameter.al2023_ami.value
+  ami                         = data.aws_ami.workload.id
   instance_type               = var.workload_instance_type
   subnet_id                   = aws_subnet.workload.id
   vpc_security_group_ids      = [aws_security_group.workload.id]

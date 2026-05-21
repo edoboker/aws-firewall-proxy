@@ -1,4 +1,4 @@
-from helpers.ssm import ssm_exec
+from common.ssm import ssm_exec
 
 
 def test_proxy_process_up(outputs, aws_region):
