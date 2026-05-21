@@ -63,31 +63,25 @@ resource "aws_security_group" "proxy" {
 }
 
 resource "aws_instance" "proxy" {
-  ami                         = data.aws_ssm_parameter.al2023_ami.value
+  ami                         = data.aws_ami.nginx_proxy.id
   instance_type               = var.proxy_instance_type
   subnet_id                   = aws_subnet.proxy.id
   vpc_security_group_ids      = [aws_security_group.proxy.id]
+  iam_instance_profile        = aws_iam_instance_profile.proxy.name
   source_dest_check           = false
   associate_public_ip_address = false
 
+  # AMI bakes in nginx + iptables rules + the refresh-sni-allowlist timer.
+  # User_data only injects the env-specific SSM parameter coordinates and
+  # kicks the timer so the first allowlist fetch happens before nginx starts.
   user_data_base64 = base64encode(<<-EOF
     #!/bin/bash
     set -e
-
-    # IP forwarding required for transparent proxy
-    echo 'net.ipv4.ip_forward = 1' >> /etc/sysctl.d/99-proxy.conf
-    sysctl -p /etc/sysctl.d/99-proxy.conf
-
-    # Install nginx + stream module (separate package on AL2023)
-    dnf install -y nginx nginx-mod-stream iptables-services
-
-    # Write nginx config
-    echo '${base64encode(file("${path.module}/configs/nginx.conf"))}' | base64 -d > /etc/nginx/nginx.conf
-
-    # iptables: redirect inbound TCP:443 to nginx
-    iptables -t nat -A PREROUTING -p tcp --dport 443 -j REDIRECT --to-port 8443
-
-    systemctl enable nginx
+    cat > /etc/sysconfig/nginx-sni-allowlist <<CONF
+    SSM_PARAMETER_NAME=${aws_ssm_parameter.nginx_sni_allowlist.name}
+    AWS_REGION=${var.aws_region}
+    CONF
+    systemctl start refresh-sni-allowlist.service
     systemctl start nginx
   EOF
   )

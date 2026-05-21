@@ -13,12 +13,29 @@ output "workload_instance_id" {
   value       = aws_instance.workload.id
 }
 
-output "envoy_instance_id" {
-  description = "Instance ID of the Envoy proxy EC2"
-  value       = aws_instance.envoy.id
+output "allowed_fqdns" {
+  description = "FQDNs the proxy chain permits — consumed by the test harness"
+  value       = var.allowed_fqdns
 }
 
-output "envoy_private_ip" {
-  description = "Private IP of the Envoy proxy EC2"
-  value       = aws_instance.envoy.private_ip
+output "aws_region" {
+  description = "Region the stack is deployed in — consumed by the test/benchmark harness"
+  value       = var.aws_region
+}
+
+# Consumed by benchmark/run.py to swap the workload default route between the
+# proxy ENI (proxied path) and the ANF endpoint (baseline path).
+output "workload_route_table_id" {
+  description = "Route table whose 0.0.0.0/0 entry steers workload egress through the proxy"
+  value       = aws_route_table.workload.id
+}
+
+output "proxy_eni_id" {
+  description = "Primary ENI of the nginx proxy — the proxied route's next hop"
+  value       = aws_instance.proxy.primary_network_interface_id
+}
+
+output "anf_endpoint_id" {
+  description = "ANF VPC endpoint ID — the baseline (no-proxy) route's next hop"
+  value       = local.anf_endpoint_id
 }

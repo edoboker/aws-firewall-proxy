@@ -43,3 +43,15 @@ terraform.rc
 # Optional: ignore plan files saved before destroying Terraform configuration
 # Uncomment the line below if you want to ignore planout files.
 # planout
+
+# Packer state/artifacts (at any depth)
+packer_cache/
+output-*/
+packer-manifest.json
+*.box
+
+# Python (test harness)
+.venv/
+__pycache__/
+*.egg-info/
+*.pyc

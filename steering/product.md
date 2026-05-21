@@ -17,3 +17,11 @@ AWS Network Firewall remains in place as a first-pass filter; the proxy adds the
 
 ## Scope
 - MVP: single-region, egress-only, HTTPS/TLS traffic
+
+## What this solution doesn't solve
+
+**Domain fronting on multi-tenant CDN edges.** An attacker can present an allowed SNI (e.g. a popular CDN-hosted hostname) to reach an edge IP that also serves a forbidden tenant, then set the encrypted HTTP `Host:` header to that forbidden tenant. The CDN routes the request based on the inner Host. The proxy cannot see the inner header because it does not terminate TLS, and so cannot block this case.
+
+This is a structural limitation of any SNI-based inspector that preserves end-to-end TLS. Major CDN providers (Cloudflare, AWS, Fastly) have banned domain fronting at the policy layer but do not enforce it cryptographically. Closing this gap would require terminating TLS at the proxy, which we explicitly reject — see `production-grade-plan.md` §12 for the rationale (cert-pinning compatibility, no decryption surface, simpler trust model).
+
+**Protocols where SNI is invisible to the proxy** (QUIC, ECH, PSK-only TLS 1.3 resumption, raw TCP) are likewise out of scope — see `bypass-vectors.md` for the full enumeration and the policy stance.
