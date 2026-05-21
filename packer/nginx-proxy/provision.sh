@@ -12,7 +12,8 @@ dnf install -y \
   nginx \
   nginx-mod-stream \
   iptables-services \
-  awscli-2
+  awscli-2 \
+  amazon-cloudwatch-agent
 
 # IP forwarding for the transparent proxy
 echo 'net.ipv4.ip_forward = 1' > /etc/sysctl.d/99-proxy.conf
@@ -56,10 +57,16 @@ install -m 0644 /tmp/refresh-sni-allowlist.timer   /etc/systemd/system/refresh-s
 # Validate nginx config now so a broken AMI fails the Packer build.
 nginx -t
 
+# CloudWatch agent — tails nginx access + error logs to CW Log Groups.
+# Config is baked into the AMI; the log groups themselves are created by
+# terraform/observability.tf and the proxy IAM role has CloudWatchAgentServerPolicy.
+install -m 0644 /tmp/cloudwatch-agent.json /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
+
 systemctl enable iptables
 systemctl enable nginx
 systemctl enable refresh-sni-allowlist.timer
+systemctl enable amazon-cloudwatch-agent
 
 # Clean up dnf cache to shrink the AMI
 dnf clean all
-rm -rf /var/cache/dnf /tmp/nginx.conf /tmp/refresh-sni-allowlist.*
+rm -rf /var/cache/dnf /tmp/nginx.conf /tmp/refresh-sni-allowlist.* /tmp/cloudwatch-agent.json

@@ -93,6 +93,11 @@ build {
     destination = "/tmp/refresh-sni-allowlist.timer"
   }
 
+  provisioner "file" {
+    source      = "${path.root}/files/cloudwatch-agent.json"
+    destination = "/tmp/cloudwatch-agent.json"
+  }
+
   provisioner "shell" {
     script          = "${path.root}/provision.sh"
     execute_command = "sudo -E bash '{{ .Path }}'"
