@@ -52,12 +52,6 @@ variable "proxy_instance_type" {
   default     = "t3.small"
 }
 
-variable "envoy_instance_type" {
-  description = "EC2 instance type for the Envoy proxy"
-  type        = string
-  default     = "t3.small"
-}
-
 variable "workload_instance_type" {
   description = "EC2 instance type for the workload client"
   type        = string
@@ -66,6 +60,12 @@ variable "workload_instance_type" {
 
 variable "allowed_fqdns" {
   description = "FQDNs allowed through the network firewall (matched with dotprefix for subdomain safety)"
+  type        = list(string)
+  default     = ["google.com", "amazonaws.com", "cdn.amazonlinux.com"]
+}
+
+variable "nginx_allowed_snis" {
+  description = "SNIs allowed by the on-host nginx gate. Pushed to SSM Parameter Store; the proxy refreshes every 60s."
   type        = list(string)
   default     = ["google.com", "amazonaws.com", "cdn.amazonlinux.com"]
 }

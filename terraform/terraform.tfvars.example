@@ -11,11 +11,18 @@ firewall_subnet_cidr = "10.0.3.0/24"
 public_subnet_cidr   = "10.0.4.0/24"
 
 proxy_instance_type    = "t3.small"
-envoy_instance_type    = "t3.small"
 workload_instance_type = "t3.micro"
 
 # FQDNs allowed through AWS Network Firewall and DNS Firewall (all others blocked)
 allowed_fqdns = [
+  "google.com",
+  "amazonaws.com",
+  "cdn.amazonlinux.com"
+]
+
+# SNIs allowed by the on-host nginx gate (independent of the ANF allowlist above).
+# Pushed by Terraform into SSM Parameter Store; the proxy refreshes from SSM every 60s.
+nginx_allowed_snis = [
   "google.com",
   "amazonaws.com",
   "cdn.amazonlinux.com"

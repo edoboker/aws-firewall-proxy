@@ -1,0 +1,10 @@
+[Unit]
+Description=Refresh nginx SNI allowlist from SSM every 60s
+
+[Timer]
+OnBootSec=10s
+OnUnitActiveSec=60s
+Unit=refresh-sni-allowlist.service
+
+[Install]
+WantedBy=timers.target
