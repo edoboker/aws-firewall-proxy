@@ -74,8 +74,12 @@ Give the EC2 instances ~60 seconds after `apply` finishes so the SSM agent regis
 
 ### 3. Run the integration tests
 
+Use a virtualenv so the test dependencies don't pollute your system Python:
+
 ```bash
 cd tests
+python -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -e .
 pytest -v
 ```

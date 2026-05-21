@@ -17,6 +17,8 @@ the deployed EC2 instances via AWS SSM Run Command.
 
 ```
 cd tests
+python -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -e .
 pytest -v
 ```
