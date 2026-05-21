@@ -15,13 +15,21 @@ the deployed EC2 instances via AWS SSM Run Command.
 
 ## Run
 
+All commands below are from the **repo root**. The shared `common` package
+(SSM + terraform-output helpers) lives there and must be installed first;
+the test suite depends on it.
+
 ```
 python -m venv .venv
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
-pip install -e .                   # at repo root: installs shared `common` package
-pip install -e ./tests             # installs this suite + pytest
+source .venv/bin/activate          # Windows cmd: .venv\Scripts\activate.bat
+                                   # Windows PowerShell: .venv\Scripts\Activate.ps1
+pip install -e .                   # shared `common` package + boto3
+pip install -e ./tests             # this suite + pytest
 pytest -v tests
 ```
+
+If you skip the first `pip install -e .` you will get
+`ModuleNotFoundError: No module named 'common'` from `conftest.py`.
 
 Set `AWS_REGION` if you deployed to anything other than the default `eu-north-1`.
 
