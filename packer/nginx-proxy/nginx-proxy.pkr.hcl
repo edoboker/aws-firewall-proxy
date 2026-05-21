@@ -28,6 +28,18 @@ variable "git_sha" {
   description = "Git short SHA injected by the build runner; used as the AMI Version tag."
 }
 
+variable "vpc_id" {
+  type        = string
+  default     = ""
+  description = "VPC to launch the build instance in. Required when the account has no default VPC."
+}
+
+variable "subnet_id" {
+  type        = string
+  default     = ""
+  description = "Subnet to launch the build instance in. Must be in vpc_id and have a route to the internet (IGW or NAT) so packer can SSH in and so dnf can fetch packages."
+}
+
 data "amazon-ami" "al2023" {
   filters = {
     name                = "al2023-ami-2023.*-x86_64"
@@ -47,6 +59,8 @@ source "amazon-ebs" "nginx_proxy" {
   ssh_username                = "ec2-user"
   ami_name                    = "${var.ami_name_prefix}-{{timestamp}}"
   associate_public_ip_address = true
+  vpc_id                      = var.vpc_id != "" ? var.vpc_id : null
+  subnet_id                   = var.subnet_id != "" ? var.subnet_id : null
 
   tags = {
     Name      = var.ami_name_prefix

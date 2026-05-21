@@ -21,6 +21,18 @@ packer build \
   .
 ```
 
+If the account has no default VPC (typical for newer AWS Organizations), Packer cannot create the temporary build security group. Either create a default VPC once with `aws ec2 create-default-vpc --region eu-north-1`, or pass an existing VPC and a public subnet:
+
+```bash
+packer build \
+  -var "git_sha=$(git rev-parse --short HEAD)" \
+  -var "vpc_id=vpc-xxxxxxxx" \
+  -var "subnet_id=subnet-xxxxxxxx" \
+  .
+```
+
+The subnet must route to the internet (IGW or NAT) so Packer can SSH in and `dnf` can fetch packages.
+
 The resulting AMI is tagged `Name=aws-firewall-proxy-nginx`. Terraform finds
 it via `data "aws_ami" "nginx_proxy"` (most-recent matching tag).
 
