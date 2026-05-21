@@ -75,13 +75,16 @@ class ScenarioResult:
 
 _RPS_RE = re.compile(r"Requests/sec:\s+([\d.]+)")
 _BYTES_RE = re.compile(r"Total data:\s+(\d+)\s+bytes")
-_PCT_RE = re.compile(r"^\s+(\d+)%\s+in\s+([\d.]+)\s+secs", re.MULTILINE)
-_STATUS_RE = re.compile(r"^\[(\d+)\]\s+(\d+)\s+responses", re.MULTILINE)
+# Some hey builds print `10%% in 0.0499 secs` (literal double-%); accept 1+.
+_PCT_RE = re.compile(r"^\s+(\d+)%+\s+in\s+([\d.]+)\s+secs", re.MULTILINE)
+_STATUS_RE = re.compile(r"^\s*\[(\d+)\]\s+(\d+)\s+responses", re.MULTILINE)
 
 
 def parse_hey(raw: str) -> HeyResult:
     rps = float(_RPS_RE.search(raw).group(1))
-    total_bytes = int(_BYTES_RE.search(raw).group(1))
+    # HEAD requests have no body, so hey omits "Total data:" — treat as 0.
+    bytes_m = _BYTES_RE.search(raw)
+    total_bytes = int(bytes_m.group(1)) if bytes_m else 0
     pcts = {int(m.group(1)): float(m.group(2)) * 1000 for m in _PCT_RE.finditer(raw)}
     total_requests = sum(int(m.group(2)) for m in _STATUS_RE.finditer(raw))
     return HeyResult(
@@ -213,12 +216,20 @@ def _poll_until(ec2, rt_id: str, *, eni_id: str | None, vpce_id: str | None) -> 
 # ── reporting ────────────────────────────────────────────────────────────────
 
 
+# HEAD requests have no response body, so hey's `Total data:` is absent
+# (parsed as 0) and we can't sum actual wire bytes. Estimate from request
+# count instead: each request triggers a TCP+TLS handshake + request/response
+# headers ≈ ~8 KB on the wire, both inbound and outbound, crossing ANF + NAT
+# in each direction. This is a rough ballpark — fine for "did the run stay
+# under a dollar?" but not for billing.
+BYTES_PER_REQUEST = 8 * 1024 * 2  # ~8 KB each way
+
+
 def estimate_cost_usd(scenarios: list[ScenarioResult]) -> float:
-    total_bytes = sum(
-        s.latency.total_bytes + s.max_rps.total_bytes for s in scenarios
+    total_requests = sum(
+        s.latency.total_requests + s.max_rps.total_requests for s in scenarios
     )
-    gb = total_bytes / (1024**3)
-    # Each byte crosses both ANF and NAT once on egress; ignore inbound.
+    gb = (total_requests * BYTES_PER_REQUEST) / (1024**3)
     return gb * (ANF_USD_PER_GB + NAT_USD_PER_GB)
 
 
