@@ -12,7 +12,7 @@ This AMI now bakes the full transparent proxy runtime:
 - the `refresh-sni-allowlist` systemd timer
 - the CloudWatch agent config for `/var/log/nginx/{access,error}.log`
 
-The build also bakes one shared DNS resolver value used by:
+The build also bakes one shared DNS resolver list used by:
 
 - nginx's `resolver` directive
 - the Lua DNS comparison path
@@ -45,7 +45,8 @@ cd ../nginx-proxy
 packer init .
 packer build \
   -var "git_sha=$(git rev-parse --short HEAD)" \
-  -var "dns_resolver=169.254.169.253" \
+  -var "dns_resolvers=169.254.169.253,1.1.1.1,8.8.8.8" \
+  -var "dns_queries_per_sni=3" \
   -var "packer_vpc_id=$(terraform -chdir=../build-infra output -raw vpc_id)" \
   -var "packer_subnet_id=$(terraform -chdir=../build-infra output -raw subnet_id)" \
   .
@@ -59,7 +60,8 @@ cd ..\nginx-proxy
 packer init .
 packer build `
   -var "git_sha=$(git rev-parse --short HEAD)" `
-  -var "dns_resolver=169.254.169.253" `
+  -var "dns_resolvers=169.254.169.253,1.1.1.1,8.8.8.8" `
+  -var "dns_queries_per_sni=3" `
   -var "packer_vpc_id=$(terraform -chdir=../build-infra output -raw vpc_id)" `
   -var "packer_subnet_id=$(terraform -chdir=../build-infra output -raw subnet_id)" `
   .
@@ -75,7 +77,7 @@ for /f "delims=" %i in ('terraform output -raw subnet_id') do @set PACKER_SUBNET
 for /f "delims=" %i in ('git rev-parse --short HEAD') do @set GIT_SHA=%i
 cd ..\nginx-proxy
 packer init .
-packer build -var "git_sha=%GIT_SHA%" -var "dns_resolver=169.254.169.253" -var "packer_vpc_id=%PACKER_VPC_ID%" -var "packer_subnet_id=%PACKER_SUBNET_ID%" .
+packer build -var "git_sha=%GIT_SHA%" -var "dns_resolvers=169.254.169.253,1.1.1.1,8.8.8.8" -var "dns_queries_per_sni=3" -var "packer_vpc_id=%PACKER_VPC_ID%" -var "packer_subnet_id=%PACKER_SUBNET_ID%" .
 ```
 
 If you have a default VPC in the account and prefer to use it, omit `packer_vpc_id` and `packer_subnet_id`.
@@ -98,7 +100,7 @@ The workload AMI does not have the same compile-heavy path, so it can stay on a 
 
 ### Default behavior on AWS / EC2
 
-The default resolver is:
+The conservative AWS-only resolver is:
 
 - `169.254.169.253`
 
@@ -114,18 +116,27 @@ Even on EC2, nginx/OpenResty stream proxying does not automatically inherit host
 
 So this AMI bakes the resolver choice into nginx config during the packer build and also persists it to a runtime env file for Lua to read.
 
-### If you want `1.1.1.1` intentionally
+### Demo resolver fanout
 
-If you intentionally want Cloudflare DNS instead of the AWS VPC resolver:
+The demo build uses Route 53 Resolver plus two public recursive resolvers:
 
 ```bash
-packer build -var "dns_resolver=1.1.1.1" .
+packer build \
+  -var "dns_resolvers=169.254.169.253,1.1.1.1,8.8.8.8" \
+  -var "dns_queries_per_sni=3" \
+  .
 ```
 
-or in PowerShell:
+Lua queries each resolver three times, follows CNAMEs, unions all A records it sees, and compares the original destination IP against that union. This improves coverage for domains whose answers rotate between queries, but it still does not prove completeness.
+
+`dns_queries_per_sni` is validated by packer and clamped by Lua to `1..16`.
+
+### If you want public DNS intentionally
+
+If you intentionally want only Cloudflare DNS instead of the AWS VPC resolver:
 
 ```powershell
-packer build -var "dns_resolver=1.1.1.1" .
+packer build -var "dns_resolvers=1.1.1.1" .
 ```
 
 Trade-offs on AWS:
@@ -134,6 +145,7 @@ Trade-offs on AWS:
 - DNS answers may differ from the VPC resolver
 - CDN edge selection may differ
 - the instance must be able to reach `1.1.1.1:53`
+- AWS Network Firewall must allow that DNS egress path if the proxy subnet routes through ANF
 
 ## What is on the host at boot
 
@@ -142,7 +154,7 @@ Trade-offs on AWS:
 - `/etc/nginx/lua/debug_log_by_lua.lua` - optional debug-only session summary hook
 - `/etc/nginx/conf.d/sni_allowlist.conf` - generated from SSM by the timer
 - `/usr/local/sbin/refresh-sni-allowlist.sh` - renders the SSM-backed allowlist map
-- `/etc/sysconfig/aws-firewall-proxy-runtime` - exports `DNS_RESOLVER`, `ENFORCE`, and `SPIKE_DEBUG`
+- `/etc/sysconfig/aws-firewall-proxy-runtime` - exports `DNS_RESOLVERS`, `DNS_QUERIES_PER_SNI`, `ENFORCE`, and `SPIKE_DEBUG`
 - `/usr/local/openresty/nginx/modules/ngx_stream_original_dst_module.so` - compiled original-dst module
 - `/etc/sysconfig/iptables` - `PREROUTING -p tcp --dport 443 -j REDIRECT --to-port 8443`, restored at boot by `iptables-services`
 - `/etc/sysctl.d/99-proxy.conf` - `net.ipv4.ip_forward = 1`
@@ -166,3 +178,4 @@ That is the right default severity because spoofing attempts are not normal traf
 
 - The current proxy path drops spoofed connections instead of silently correcting them.
 - The SSM allowlist still remains an independent first-layer gate on top of the SNI-vs-original-dst spoofing detection.
+- DNS/original-dst matching is probabilistic for CDN-style domains. Multiple resolvers and repeated queries improve coverage, but they cannot guarantee that the proxy sees every IP a client may have received.

@@ -10,6 +10,8 @@ AWS Network Firewall FQDN rules inspect the TLS SNI value, but they do not verif
 - resolve the claimed SNI
 - drop the connection if the original destination IP is not in the resolved set
 
+Important production caveat: the DNS-to-original-destination comparison is probabilistic for large, geo-distributed, CDN-backed services. A client and the proxy may query at different times, through different recursive resolvers, and legitimately receive different A-record subsets for the same SNI. This project can reduce the false-positive rate by querying multiple resolvers multiple times and unioning the results, but it cannot prove that it has every IP the client might have received.
+
 ## Architecture
 
 ```text
@@ -18,7 +20,7 @@ Workload EC2  -->  nginx proxy EC2  -->  AWS Network Firewall  -->  NAT GW  --> 
 ```
 
 - **Workload subnet** - client EC2 instance; default route points to the proxy ENI.
-- **Proxy subnet** - transparent OpenResty intercepts TLS via iptables REDIRECT, recovers `SO_ORIGINAL_DST` via a custom C stream module, parses ClientHello in Lua, resolves the SNI via VPC DNS, and drops spoofed connections. The host also enforces a first-layer SNI allowlist sourced from SSM Parameter Store.
+- **Proxy subnet** - transparent OpenResty intercepts TLS via iptables REDIRECT, recovers `SO_ORIGINAL_DST` via a custom C stream module, parses ClientHello in Lua, resolves the SNI through the configured resolver set, and drops spoofed connections. The host also enforces a first-layer SNI allowlist sourced from SSM Parameter Store.
 - **Firewall subnet** - AWS Network Firewall applies an independent FQDN allowlist using Suricata `dotprefix` rules.
 - **Public subnet** - NAT Gateway for internet egress.
 
@@ -71,6 +73,13 @@ packer build \
 ```
 
 This builds an AL2023-based AMI with OpenResty, the original-dst C module, the Lua preread guard, iptables-services, awscli v2, CloudWatch agent config, and the `refresh-sni-allowlist` timer baked in.
+
+The `Makefile` demo defaults build the proxy with:
+
+- `DNS_RESOLVERS=169.254.169.253,1.1.1.1,8.8.8.8`
+- `DNS_QUERIES_PER_SNI=3`
+
+That means Lua queries Route 53 Resolver, Cloudflare DNS, and Google DNS three times each, unions all A records it sees, and only then compares the original destination IP. The Terraform demo policy also allows the proxy to send DNS traffic to `1.1.1.1` and `8.8.8.8`.
 
 #### 1c. Build the workload AMI
 
@@ -182,5 +191,19 @@ Terraform does not deregister the Packer-built AMIs; remove them manually if you
 - **iptables `PREROUTING` REDIRECT** - steers inbound port 443 to the proxy listener on 8443 without client-side configuration.
 - **Custom C module for `SO_ORIGINAL_DST`** - surfaces the pre-NAT destination IP to nginx/OpenResty.
 - **Lua preread policy** - parses ClientHello directly, enforces the allowlist, resolves DNS, and logs spoofing detections.
+- **Configurable DNS fanout** - the proxy can query multiple resolvers repeatedly for each SNI, then union the returned A records before deciding.
 - **Golden AMI via Packer** - avoids boot-time package drift and keeps the proxy runtime reproducible.
 - **Two independent allowlists (nginx + ANF)** - defense in depth; either layer can deny.
+
+## DNS Matching Caveat
+
+The SNI/original-dst check asks: "does the destination IP appear in the DNS answers we can observe for this SNI?" That is useful, but it is not a perfect truth oracle.
+
+For names such as `google.com`, repeated `nslookup google.com 8.8.8.8` calls may return one different IP each time. Other names, such as `login.microsoftonline.com`, may return 10 or more addresses in a single response. Both behaviors are normal. Large providers use recursive resolver location, cache state, TTLs, load balancing, and CDN edge selection to vary answers.
+
+Production implication: strict dropping on DNS mismatch can false-positive for high-scale CDN-style domains. The project therefore makes the resolver list and query count explicit:
+
+- `DNS_RESOLVERS`: comma-separated resolver list baked into the proxy AMI
+- `DNS_QUERIES_PER_SNI`: number of A-record queries per resolver, clamped to `1..16`
+
+The demo uses Route 53 Resolver plus `1.1.1.1` and `8.8.8.8`, with three queries per resolver. This improves coverage, but it still does not guarantee completeness. For production workloads, treat the DNS comparison as a high-confidence signal whose enforcement mode should be chosen per risk appetite and domain behavior.

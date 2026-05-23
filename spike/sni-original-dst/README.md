@@ -24,7 +24,7 @@ In the default runtime mode:
 Example spoofing warning:
 
 ```text
-... spike_lua="check_sni" event="sni_spoofing_detected" decision="mismatch" sni="www.google.com" original_dst="192.0.2.1:443" dst_ip="192.0.2.1" resolved="142.251.150.119,142.251.151.119,..." dns_resolver="1.1.1.1" record_version="0x0301" record_len="512" handshake_type="1" handshake_len="508" client_hello_version="0x0303" session_id_len="32" cipher_suites_len="36" cipher_suite_count="18" compression_methods_len="1" extensions_len="397" extension_count="11"
+... spike_lua="check_sni" event="sni_spoofing_detected" decision="mismatch" sni="www.google.com" original_dst="192.0.2.1:443" dst_ip="192.0.2.1" resolved="142.251.150.119,142.251.151.119,..." dns_resolver="1.1.1.1,8.8.8.8" dns_queries_per_sni="3" record_version="0x0301" record_len="512" handshake_type="1" handshake_len="508" client_hello_version="0x0303" session_id_len="32" cipher_suites_len="36" cipher_suite_count="18" compression_methods_len="1" extensions_len="397" extension_count="11"
 ```
 
 If you opt into the JSON access log for debugging, the useful fields are:
@@ -187,7 +187,7 @@ This keeps the minimum privileged wire-up in C and leaves policy in Lua.
 3. The compiled `.so` is copied into OpenResty's module directory and loaded with `load_module`.
 4. The nginx config template, Lua files, and probe script are copied into the image.
 5. At container start, [`entrypoint.sh`](./entrypoint.sh):
-   - renders `nginx.conf` from the template using `DNS_RESOLVER`
+   - renders `nginx.conf` from the template using `DNS_RESOLVERS`
    - renders nginx's error log level as `warn` by default or `notice` when `SPIKE_DEBUG=1`
    - exports `SPIKE_DEBUG` for nginx worker visibility
    - installs the iptables REDIRECT rules
@@ -231,11 +231,13 @@ Do not add nginx's builtin `$ssl_preread_server_name` back into the JSON line un
 
 ## Shared DNS configuration
 
-The spike now uses one shared resolver setting for both nginx and Lua:
+The spike now uses one shared resolver list for both nginx and Lua:
 
-- environment variable: `DNS_RESOLVER`
+- environment variable: `DNS_RESOLVERS`
+- compatibility fallback: `DNS_RESOLVER`
+- query-count variable: `DNS_QUERIES_PER_SNI`, clamped to `1..16`
 - nginx consumes it when [`entrypoint.sh`](./entrypoint.sh) renders [`nginx.conf`](./nginx.conf)
-- Lua consumes it via `os.getenv("DNS_RESOLVER")`
+- Lua consumes it via `os.getenv("DNS_RESOLVERS")`
 
 This removes the old mismatch where nginx and Lua could resolve through different servers.
 
@@ -245,7 +247,7 @@ Inside the spike container there are two DNS paths:
 
 1. nginx plus Lua
    - this is the security-relevant path
-   - both use the shared `DNS_RESOLVER`
+   - both use the shared `DNS_RESOLVERS`
    - the default is `1.1.1.1`
 
 2. other processes such as `curl`
@@ -255,24 +257,29 @@ Inside the spike container there are two DNS paths:
 That means Probe A works like this:
 
 - `curl` picks a destination IP using the container resolver
-- nginx and Lua validate the SNI using `DNS_RESOLVER`
+- nginx and Lua validate the SNI using `DNS_RESOLVERS`
 
 Those usually overlap for `www.google.com`, but they are not literally the same mechanism unless you align them.
 
-To override the nginx plus Lua resolver:
+To override the nginx plus Lua resolver list:
 
 ```powershell
-docker run --rm -d --name sni-spike --cap-add=NET_ADMIN -e DNS_RESOLVER=1.1.1.1 sni-spike
-docker run --rm -d --name sni-spike --cap-add=NET_ADMIN -e DNS_RESOLVER=8.8.8.8 sni-spike
+docker run --rm -d --name sni-spike --cap-add=NET_ADMIN -e DNS_RESOLVERS=1.1.1.1,8.8.8.8 -e DNS_QUERIES_PER_SNI=3 sni-spike
 ```
 
 If you also want the probe client in the container to use the same DNS server, set Docker DNS too:
 
 ```powershell
-docker run --rm -d --name sni-spike --cap-add=NET_ADMIN --dns 1.1.1.1 -e DNS_RESOLVER=1.1.1.1 sni-spike
+docker run --rm -d --name sni-spike --cap-add=NET_ADMIN --dns 1.1.1.1 -e DNS_RESOLVERS=1.1.1.1 sni-spike
 ```
 
-Without `--dns`, `curl` may still use Docker's default resolver path even though nginx and Lua are using `DNS_RESOLVER`.
+Without `--dns`, `curl` may still use Docker's default resolver path even though nginx and Lua are using `DNS_RESOLVERS`.
+
+### Why repeated DNS queries exist
+
+For high-scale domains, DNS answers can rotate even when asking the same resolver repeatedly. For example, repeated `nslookup google.com 8.8.8.8` calls may return one different A record each time, while `login.microsoftonline.com` may return a larger set in one response. Both are normal.
+
+The spike therefore supports `DNS_QUERIES_PER_SNI`: Lua queries each configured resolver that many times, follows CNAMEs, unions all A records it observes, and compares `$original_dst` against the union. This reduces false positives, but it does not guarantee that the proxy has seen every IP a client may have received.
 
 ### EC2 and AWS behavior
 
@@ -295,13 +302,13 @@ If you intentionally want the proxy to use `1.1.1.1` instead of the AWS VPC reso
 For the spike container:
 
 ```powershell
-docker run --rm -d --name sni-spike --cap-add=NET_ADMIN -e DNS_RESOLVER=1.1.1.1 sni-spike
+docker run --rm -d --name sni-spike --cap-add=NET_ADMIN -e DNS_RESOLVERS=1.1.1.1 sni-spike
 ```
 
 For the AMI build:
 
 ```powershell
-packer build -var "dns_resolver=1.1.1.1" .
+packer build -var "dns_resolvers=1.1.1.1" .
 ```
 
 Trade-offs on AWS:
@@ -317,14 +324,14 @@ nginx stream proxying does not automatically use "whatever the host resolver is"
 
 That is why this design is explicit:
 
-- in the spike container, [`entrypoint.sh`](./entrypoint.sh) renders nginx config from `DNS_RESOLVER`
-- in the EC2 AMI, `provision.sh` renders nginx config from the packer `dns_resolver` variable
+- in the spike container, [`entrypoint.sh`](./entrypoint.sh) renders nginx config from `DNS_RESOLVERS`
+- in the EC2 AMI, `provision.sh` renders nginx config from the packer `dns_resolvers` variable
 
 ### Packer wiring
 
 The AMI build also has a single resolver variable:
 
-- packer variable: `dns_resolver`
+- packer variable: `dns_resolvers`
 - default in `packer/nginx-proxy/nginx-proxy.pkr.hcl`: `169.254.169.253`
 
 During the AMI build:
@@ -333,7 +340,8 @@ During the AMI build:
 - it also writes `/etc/sysconfig/aws-firewall-proxy-runtime` containing:
 
 ```bash
-DNS_RESOLVER=<value>
+DNS_RESOLVERS=<value>
+DNS_QUERIES_PER_SNI=<value>
 ```
 
 That runtime file is the future handoff point for Lua or other runtime logic so nginx and Lua can consume the same baked resolver value.

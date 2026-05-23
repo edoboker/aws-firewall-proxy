@@ -10,7 +10,9 @@ ASSET_ROOT=/tmp/assets
 OPENRESTY_VERSION=1.27.1.1
 OPENRESTY_URL="https://openresty.org/download/openresty-${OPENRESTY_VERSION}.tar.gz"
 OPENRESTY_SRC="/usr/local/src/openresty-${OPENRESTY_VERSION}"
-DNS_RESOLVER="${DNS_RESOLVER:-169.254.169.253}"
+DNS_RESOLVERS="${DNS_RESOLVERS:-${DNS_RESOLVER:-169.254.169.253}}"
+DNS_RESOLVERS_FOR_NGINX="${DNS_RESOLVERS//,/ }"
+DNS_QUERIES_PER_SNI="${DNS_QUERIES_PER_SNI:-1}"
 
 # Wait for cloud-init so dnf locks are released.
 cloud-init status --wait || true
@@ -103,7 +105,7 @@ COMMIT
 EOF
 chmod 600 /etc/sysconfig/iptables
 
-sed "s|__DNS_RESOLVER__|$DNS_RESOLVER|g" \
+sed "s|__DNS_RESOLVERS__|$DNS_RESOLVERS_FOR_NGINX|g" \
   "${ASSET_ROOT}/nginx/conf/nginx.conf.template" \
   > /etc/nginx/nginx.conf
 chmod 0644 /etc/nginx/nginx.conf
@@ -119,7 +121,8 @@ install -m 0644 "${ASSET_ROOT}/cloudwatch/amazon-cloudwatch-agent.json" \
 
 # Persist runtime env that the service exports to the OpenResty master process.
 cat > /etc/sysconfig/aws-firewall-proxy-runtime << EOF
-DNS_RESOLVER=$DNS_RESOLVER
+DNS_RESOLVERS=$DNS_RESOLVERS
+DNS_QUERIES_PER_SNI=$DNS_QUERIES_PER_SNI
 ENFORCE=1
 SPIKE_DEBUG=0
 EOF

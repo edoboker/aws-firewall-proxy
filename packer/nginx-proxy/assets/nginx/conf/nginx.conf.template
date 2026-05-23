@@ -4,6 +4,8 @@ user nginx;
 
 env ENFORCE;
 env DNS_RESOLVER;
+env DNS_RESOLVERS;
+env DNS_QUERIES_PER_SNI;
 env SPIKE_DEBUG;
 
 worker_processes auto;
@@ -28,13 +30,14 @@ http {
 
 stream {
     lua_package_path "/etc/nginx/lua/?.lua;;";
+    lua_socket_log_errors off;
 
     lua_add_variable $spike_decision;
     lua_add_variable $spike_sni;
     lua_add_variable $spike_resolved;
     lua_add_variable $spike_dst_ip;
 
-    resolver __DNS_RESOLVER__ valid=10s ipv6=off;
+    resolver __DNS_RESOLVERS__ valid=10s ipv6=off;
     resolver_timeout 5s;
 
     include /etc/nginx/conf.d/sni_allowlist.conf;

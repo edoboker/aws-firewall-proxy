@@ -69,3 +69,9 @@ variable "nginx_allowed_snis" {
   type        = list(string)
   default     = ["google.com", "amazonaws.com", "cdn.amazonlinux.com"]
 }
+
+variable "proxy_public_dns_resolvers" {
+  description = "Public DNS resolver IPs the demo firewall policy allows the proxy to query directly."
+  type        = list(string)
+  default     = ["1.1.1.1", "8.8.8.8"]
+}

@@ -13,9 +13,15 @@
 
 local ENFORCE = (os.getenv("ENFORCE") or "1") == "1"
 local DEBUG = (os.getenv("SPIKE_DEBUG") or "0") == "1"
-local DNS_RESOLVER = os.getenv("DNS_RESOLVER") or "169.254.169.253"
-local FALLBACK_DNS_RESOLVERS = { "1.1.1.1", "8.8.8.8" }
+local DNS_RESOLVERS = os.getenv("DNS_RESOLVERS") or os.getenv("DNS_RESOLVER") or "169.254.169.253"
+local DNS_QUERIES_PER_SNI = tonumber(os.getenv("DNS_QUERIES_PER_SNI") or "1") or 1
 local MAX_CNAME_DEPTH = 5
+
+if DNS_QUERIES_PER_SNI < 1 then
+    DNS_QUERIES_PER_SNI = 1
+elseif DNS_QUERIES_PER_SNI > 16 then
+    DNS_QUERIES_PER_SNI = 16
+end
 
 local function q(value)
     if value == nil then
@@ -51,6 +57,7 @@ local function log_event(level, event, fields)
         "resolved",
         "sni_allowed",
         "dns_resolver",
+        "dns_queries_per_sni",
         "record_content_type",
         "record_version",
         "record_len",
@@ -95,9 +102,12 @@ local function build_nameserver_list()
         end
     end
 
-    add(DNS_RESOLVER)
-    for _, nameserver in ipairs(FALLBACK_DNS_RESOLVERS) do
+    for nameserver in tostring(DNS_RESOLVERS):gmatch("[^,%s]+") do
         add(nameserver)
+    end
+
+    if #nameservers == 0 then
+        add("169.254.169.253")
     end
 
     return nameservers
@@ -361,7 +371,7 @@ end
 local function resolve_sni_addresses(hostname)
     local resolver_mod, require_err = require_resolver_module()
     if not resolver_mod then
-        return nil, nil, DNS_RESOLVER, "resolver_require_failed:" .. tostring(require_err)
+        return nil, nil, DNS_RESOLVERS, "resolver_require_failed:" .. tostring(require_err)
     end
 
     local nameservers = build_nameserver_list()
@@ -369,13 +379,15 @@ local function resolve_sni_addresses(hostname)
     local errors = {}
 
     for _, nameserver in ipairs(nameservers) do
-        local addresses, err = query_a_records(resolver_mod, nameserver, hostname, 0)
-        if addresses then
-            for _, address in ipairs(addresses) do
-                resolved[address] = true
+        for _ = 1, DNS_QUERIES_PER_SNI do
+            local addresses, err = query_a_records(resolver_mod, nameserver, hostname, 0)
+            if addresses then
+                for _, address in ipairs(addresses) do
+                    resolved[address] = true
+                end
+            elseif err then
+                errors[#errors + 1] = err
             end
-        elseif err then
-            errors[#errors + 1] = err
         end
     end
 
@@ -406,7 +418,7 @@ local ok, runtime_err = xpcall(function()
     if not original_dst or original_dst == "" then
         return fail_internal("missing_original_dst", {
             original_dst = original_dst,
-            dns_resolver = DNS_RESOLVER,
+            dns_resolver = DNS_RESOLVERS,
             err = "iptables REDIRECT likely missing",
         })
     end
@@ -415,7 +427,7 @@ local ok, runtime_err = xpcall(function()
     if not dst_ip then
         return fail_internal("bad_original_dst", {
             original_dst = original_dst,
-            dns_resolver = DNS_RESOLVER,
+            dns_resolver = DNS_RESOLVERS,
         })
     end
     set_var("spike_dst_ip", dst_ip)
@@ -425,7 +437,7 @@ local ok, runtime_err = xpcall(function()
         return fail_internal("client_hello_peek_failed", {
             original_dst = original_dst,
             dst_ip = dst_ip,
-            dns_resolver = DNS_RESOLVER,
+            dns_resolver = DNS_RESOLVERS,
             err = peek_err,
         })
     end
@@ -436,7 +448,7 @@ local ok, runtime_err = xpcall(function()
             debug_log("missing_sni", {
                 original_dst = original_dst,
                 dst_ip = dst_ip,
-                dns_resolver = DNS_RESOLVER,
+                dns_resolver = DNS_RESOLVERS,
             })
             return fail_quiet("drop_no_sni")
         end
@@ -444,7 +456,7 @@ local ok, runtime_err = xpcall(function()
         return fail_internal("client_hello_parse_failed", {
             original_dst = original_dst,
             dst_ip = dst_ip,
-            dns_resolver = DNS_RESOLVER,
+            dns_resolver = DNS_RESOLVERS,
             err = parse_err,
         })
     end
@@ -455,7 +467,8 @@ local ok, runtime_err = xpcall(function()
         sni = clienthello.sni,
         original_dst = original_dst,
         dst_ip = dst_ip,
-        dns_resolver = DNS_RESOLVER,
+        dns_resolver = DNS_RESOLVERS,
+        dns_queries_per_sni = DNS_QUERIES_PER_SNI,
         record_content_type = clienthello.record_content_type,
         record_version = clienthello.record_version,
         record_len = clienthello.record_len,
@@ -476,7 +489,7 @@ local ok, runtime_err = xpcall(function()
             sni = clienthello.sni,
             original_dst = original_dst,
             dst_ip = dst_ip,
-            dns_resolver = DNS_RESOLVER,
+            dns_resolver = DNS_RESOLVERS,
         })
     end
 
@@ -487,7 +500,8 @@ local ok, runtime_err = xpcall(function()
             original_dst = original_dst,
             dst_ip = dst_ip,
             sni_allowed = sni_allowed,
-            dns_resolver = DNS_RESOLVER,
+            dns_resolver = DNS_RESOLVERS,
+            dns_queries_per_sni = DNS_QUERIES_PER_SNI,
         })
         return fail_quiet("deny_allowlist")
     end
@@ -498,7 +512,8 @@ local ok, runtime_err = xpcall(function()
             sni = clienthello.sni,
             original_dst = original_dst,
             dst_ip = dst_ip,
-            dns_resolver = dns_resolver_used or DNS_RESOLVER,
+            dns_resolver = dns_resolver_used or DNS_RESOLVERS,
+            dns_queries_per_sni = DNS_QUERIES_PER_SNI,
             err = resolve_err,
         })
     end
@@ -514,6 +529,7 @@ local ok, runtime_err = xpcall(function()
             resolved = resolved_str,
             sni_allowed = sni_allowed,
             dns_resolver = dns_resolver_used,
+            dns_queries_per_sni = DNS_QUERIES_PER_SNI,
         })
         return
     end
@@ -527,6 +543,7 @@ local ok, runtime_err = xpcall(function()
         resolved = resolved_str,
         sni_allowed = sni_allowed,
         dns_resolver = dns_resolver_used,
+        dns_queries_per_sni = DNS_QUERIES_PER_SNI,
         record_content_type = clienthello.record_content_type,
         record_version = clienthello.record_version,
         record_len = clienthello.record_len,
@@ -551,7 +568,8 @@ end)
 if not ok then
     set_decision("lua_exception")
     log_event(ngx.ERR, "lua_exception", {
-        dns_resolver = DNS_RESOLVER,
+        dns_resolver = DNS_RESOLVERS,
+        dns_queries_per_sni = DNS_QUERIES_PER_SNI,
         err = runtime_err,
     })
     return ngx.exit(ngx.ERROR)

@@ -7,8 +7,10 @@ set -euo pipefail
 #
 # Container must be started with --cap-add=NET_ADMIN.
 
-DNS_RESOLVER="${DNS_RESOLVER:-1.1.1.1}"
-export DNS_RESOLVER
+DNS_RESOLVERS="${DNS_RESOLVERS:-${DNS_RESOLVER:-1.1.1.1}}"
+DNS_RESOLVERS_FOR_NGINX="${DNS_RESOLVERS//,/ }"
+DNS_QUERIES_PER_SNI="${DNS_QUERIES_PER_SNI:-1}"
+export DNS_RESOLVERS DNS_QUERIES_PER_SNI
 SPIKE_DEBUG="${SPIKE_DEBUG:-0}"
 export SPIKE_DEBUG
 if [ "$SPIKE_DEBUG" = "1" ]; then
@@ -18,10 +20,10 @@ else
 fi
 
 if [ "$SPIKE_DEBUG" = "1" ]; then
-  echo "[entrypoint] rendering nginx.conf with DNS_RESOLVER=$DNS_RESOLVER SPIKE_ERROR_LOG_LEVEL=$SPIKE_ERROR_LOG_LEVEL"
+  echo "[entrypoint] rendering nginx.conf with DNS_RESOLVERS=$DNS_RESOLVERS DNS_QUERIES_PER_SNI=$DNS_QUERIES_PER_SNI SPIKE_ERROR_LOG_LEVEL=$SPIKE_ERROR_LOG_LEVEL"
 fi
 
-sed -e "s|__DNS_RESOLVER__|$DNS_RESOLVER|g" \
+sed -e "s|__DNS_RESOLVERS__|$DNS_RESOLVERS_FOR_NGINX|g" \
     -e "s|__ERROR_LOG_LEVEL__|$SPIKE_ERROR_LOG_LEVEL|g" \
     /usr/local/openresty/nginx/conf/nginx.conf.template \
     > /usr/local/openresty/nginx/conf/nginx.conf
