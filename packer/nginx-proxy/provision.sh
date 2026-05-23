@@ -4,7 +4,7 @@
 #   * compile and install the original-dst stream C module
 #   * install the Lua SNI/original-dst guard
 #   * bake in the SSM allowlist refresh timer and CloudWatch agent config
-set -euxo pipefail
+set -euo pipefail
 
 ASSET_ROOT=/tmp/assets
 OPENRESTY_VERSION=1.27.1.1
@@ -62,8 +62,21 @@ pushd "$OPENRESTY_SRC"
   --with-stream_ssl_preread_module \
   --with-compat \
   --add-dynamic-module="${ASSET_ROOT}/nginx/c-module"
-make -j"$(nproc)"
-make install
+
+BUILD_LOG=/var/log/openresty-build.log
+INSTALL_LOG=/var/log/openresty-install.log
+
+if ! make -j"$(nproc)" >"$BUILD_LOG" 2>&1; then
+  echo "openresty build failed; tail of $BUILD_LOG:" >&2
+  tail -n 200 "$BUILD_LOG" >&2 || true
+  exit 1
+fi
+
+if ! make install >"$INSTALL_LOG" 2>&1; then
+  echo "openresty install failed; tail of $INSTALL_LOG:" >&2
+  tail -n 200 "$INSTALL_LOG" >&2 || true
+  exit 1
+fi
 popd
 
 install -m 0755 "$(find "$OPENRESTY_SRC" -path '*/objs/ngx_stream_original_dst_module.so' | head -n 1)" \
