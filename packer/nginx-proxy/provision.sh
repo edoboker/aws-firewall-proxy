@@ -23,7 +23,7 @@ dnf install -y \
   pcre-devel \
   openssl-devel \
   zlib-devel \
-  curl \
+  curl-minimal \
   tar \
   findutils \
   diffutils \
