@@ -14,10 +14,28 @@ DNS_RESOLVERS="${DNS_RESOLVERS:-${DNS_RESOLVER:-169.254.169.253}}"
 DNS_RESOLVERS_FOR_NGINX="${DNS_RESOLVERS//,/ }"
 DNS_QUERIES_PER_SNI="${DNS_QUERIES_PER_SNI:-1}"
 
+log_step() {
+  echo "[proxy-ami] $1"
+}
+
+run_quiet() {
+  local step="$1"
+  local log_file="$2"
+  shift 2
+
+  log_step "$step"
+  if ! "$@" >"$log_file" 2>&1; then
+    echo "$step failed; tail of $log_file:" >&2
+    tail -n 200 "$log_file" >&2 || true
+    exit 1
+  fi
+}
+
 # Wait for cloud-init so dnf locks are released.
 cloud-init status --wait || true
 
-dnf install -y \
+run_quiet "Installing build and runtime packages" /var/log/proxy-dnf-install.log \
+  dnf install -y -q \
   gcc \
   gcc-c++ \
   make \
@@ -34,6 +52,7 @@ dnf install -y \
   amazon-cloudwatch-agent
 
 if ! id nginx >/dev/null 2>&1; then
+  log_step "Creating nginx service account"
   groupadd --system nginx
   useradd --system --gid nginx --home-dir /var/cache/nginx --shell /sbin/nologin nginx
 fi
@@ -46,11 +65,13 @@ mkdir -p \
   /var/cache/nginx \
   /var/log/nginx
 
+log_step "Fetching OpenResty source"
 curl -fsSL "$OPENRESTY_URL" -o /tmp/openresty.tgz
 tar -xzf /tmp/openresty.tgz -C /usr/local/src
 
 pushd "$OPENRESTY_SRC"
-./configure \
+run_quiet "Configuring OpenResty build" /var/log/openresty-configure.log \
+  ./configure \
   --prefix=/usr/local/openresty \
   --conf-path=/etc/nginx/nginx.conf \
   --error-log-path=/var/log/nginx/error.log \
@@ -68,19 +89,12 @@ pushd "$OPENRESTY_SRC"
 BUILD_LOG=/var/log/openresty-build.log
 INSTALL_LOG=/var/log/openresty-install.log
 
-if ! make -j"$(nproc)" >"$BUILD_LOG" 2>&1; then
-  echo "openresty build failed; tail of $BUILD_LOG:" >&2
-  tail -n 200 "$BUILD_LOG" >&2 || true
-  exit 1
-fi
+run_quiet "Building OpenResty" "$BUILD_LOG" make -j"$(nproc)"
 
-if ! make install >"$INSTALL_LOG" 2>&1; then
-  echo "openresty install failed; tail of $INSTALL_LOG:" >&2
-  tail -n 200 "$INSTALL_LOG" >&2 || true
-  exit 1
-fi
+run_quiet "Installing OpenResty" "$INSTALL_LOG" make install
 popd
 
+log_step "Installing original-dst module and runtime assets"
 install -m 0755 "$(find "$OPENRESTY_SRC" -path '*/objs/ngx_stream_original_dst_module.so' | head -n 1)" \
   /usr/local/openresty/nginx/modules/ngx_stream_original_dst_module.so
 ln -sf /usr/local/openresty/nginx/sbin/nginx /usr/sbin/nginx
@@ -141,16 +155,20 @@ EOF
 systemctl daemon-reload
 
 # Validate now so a broken AMI fails the Packer build.
+log_step "Validating nginx configuration"
 nginx -t
 
+log_step "Enabling services"
 systemctl enable iptables
 systemctl enable nginx
 systemctl enable refresh-sni-allowlist.timer
 systemctl enable amazon-cloudwatch-agent
 
-dnf clean all
+run_quiet "Cleaning package manager caches" /var/log/proxy-dnf-clean.log dnf clean all
 rm -rf \
   /var/cache/dnf \
   /tmp/openresty.tgz \
   "$OPENRESTY_SRC" \
   /tmp/assets
+
+log_step "Proxy AMI provisioning complete"
