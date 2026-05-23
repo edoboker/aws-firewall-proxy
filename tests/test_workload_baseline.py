@@ -5,8 +5,8 @@ from common.ssm import ssm_exec
 
 @pytest.fixture(scope="session")
 def baseline_fqdn(outputs) -> str:
-    fqdns = outputs["allowed_fqdns"]
-    assert fqdns, "no allowed_fqdns output — check terraform/variables.tf"
+    fqdns = outputs.get("nginx_allowed_snis") or outputs["allowed_fqdns"]
+    assert fqdns, "no baseline fqdn output - check terraform/variables.tf and terraform/outputs.tf"
     return fqdns[0]
 
 

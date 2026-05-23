@@ -14,6 +14,8 @@
 local ENFORCE = (os.getenv("ENFORCE") or "1") == "1"
 local DEBUG = (os.getenv("SPIKE_DEBUG") or "0") == "1"
 local DNS_RESOLVER = os.getenv("DNS_RESOLVER") or "169.254.169.253"
+local FALLBACK_DNS_RESOLVERS = { "1.1.1.1", "8.8.8.8" }
+local MAX_CNAME_DEPTH = 5
 
 local function q(value)
     if value == nil then
@@ -80,6 +82,25 @@ local function debug_log(event, fields)
     if DEBUG then
         log_event(ngx.NOTICE, event, fields)
     end
+end
+
+local function build_nameserver_list()
+    local nameservers = {}
+    local seen = {}
+
+    local function add(nameserver)
+        if nameserver and nameserver ~= "" and not seen[nameserver] then
+            seen[nameserver] = true
+            nameservers[#nameservers + 1] = nameserver
+        end
+    end
+
+    add(DNS_RESOLVER)
+    for _, nameserver in ipairs(FALLBACK_DNS_RESOLVERS) do
+        add(nameserver)
+    end
+
+    return nameservers
 end
 
 local function set_decision(decision)
@@ -285,6 +306,95 @@ local function parse_client_hello(record)
     return nil, "sni_extension_not_found"
 end
 
+local function require_resolver_module()
+    local require_ok, resolver_mod = pcall(require, "resty.dns.resolver")
+    if not require_ok then
+        return nil, tostring(resolver_mod)
+    end
+
+    return resolver_mod
+end
+
+local function query_a_records(resolver_mod, nameserver, hostname, depth)
+    if depth > MAX_CNAME_DEPTH then
+        return nil, "cname_depth_exceeded"
+    end
+
+    local resolver, resolver_err = resolver_mod:new({
+        nameservers = { nameserver },
+        retrans = 2,
+        timeout = 1500,
+    })
+    if not resolver then
+        return nil, "resolver_init_failed:" .. tostring(nameserver) .. ":" .. tostring(resolver_err)
+    end
+
+    local answers, query_err = resolver:query(hostname, { qtype = resolver.TYPE_A })
+    if not answers or answers.errcode then
+        return nil, "resolver_query_failed:" .. tostring(nameserver) .. ":" .. tostring(query_err or (answers and answers.errstr))
+    end
+
+    local addresses = {}
+    local seen = {}
+    local cname_target
+
+    for _, answer in ipairs(answers) do
+        if answer.address and not seen[answer.address] then
+            seen[answer.address] = true
+            addresses[#addresses + 1] = answer.address
+        elseif answer.cname and not cname_target then
+            cname_target = answer.cname
+        end
+    end
+
+    if #addresses > 0 then
+        return addresses
+    end
+
+    if cname_target then
+        return query_a_records(resolver_mod, nameserver, cname_target, depth + 1)
+    end
+
+    return {}, nil
+end
+
+local function resolve_sni_addresses(hostname)
+    local resolver_mod, require_err = require_resolver_module()
+    if not resolver_mod then
+        return nil, nil, DNS_RESOLVER, "resolver_require_failed:" .. tostring(require_err)
+    end
+
+    local nameservers = build_nameserver_list()
+    local resolved = {}
+    local errors = {}
+
+    for _, nameserver in ipairs(nameservers) do
+        local addresses, err = query_a_records(resolver_mod, nameserver, hostname, 0)
+        if addresses then
+            for _, address in ipairs(addresses) do
+                resolved[address] = true
+            end
+        elseif err then
+            errors[#errors + 1] = err
+        end
+    end
+
+    local resolved_list = {}
+    for ip, _ in pairs(resolved) do
+        resolved_list[#resolved_list + 1] = ip
+    end
+    table.sort(resolved_list)
+
+    if #resolved_list == 0 then
+        if #errors == 0 then
+            errors[1] = "resolver_returned_no_a_records"
+        end
+        return nil, nil, table.concat(nameservers, ","), table.concat(errors, "; ")
+    end
+
+    return resolved, table.concat(resolved_list, ","), table.concat(nameservers, ","), (#errors > 0 and table.concat(errors, "; ") or nil)
+end
+
 local ok, runtime_err = xpcall(function()
     local original_dst = ngx.var.original_dst
 
@@ -382,57 +492,17 @@ local ok, runtime_err = xpcall(function()
         return fail_quiet("deny_allowlist")
     end
 
-    local require_ok, resolver_mod = pcall(require, "resty.dns.resolver")
-    if not require_ok then
-        return fail_internal("resolver_require_failed", {
-            sni = clienthello.sni,
-            original_dst = original_dst,
-            dst_ip = dst_ip,
-            dns_resolver = DNS_RESOLVER,
-            err = resolver_mod,
-        })
-    end
-
-    local resolver, resolver_err = resolver_mod:new({
-        nameservers = { DNS_RESOLVER },
-        retrans = 2,
-        timeout = 1500,
-    })
-    if not resolver then
-        return fail_internal("resolver_init_failed", {
-            sni = clienthello.sni,
-            original_dst = original_dst,
-            dst_ip = dst_ip,
-            dns_resolver = DNS_RESOLVER,
-            err = resolver_err,
-        })
-    end
-
-    local answers, query_err = resolver:query(clienthello.sni, { qtype = resolver.TYPE_A })
-    if not answers or answers.errcode then
+    local resolved, resolved_str, dns_resolver_used, resolve_err = resolve_sni_addresses(clienthello.sni)
+    if not resolved then
         return fail_internal("resolver_query_failed", {
             sni = clienthello.sni,
             original_dst = original_dst,
             dst_ip = dst_ip,
-            dns_resolver = DNS_RESOLVER,
-            err = query_err or (answers and answers.errstr),
+            dns_resolver = dns_resolver_used or DNS_RESOLVER,
+            err = resolve_err,
         })
     end
 
-    local resolved = {}
-    for _, answer in ipairs(answers) do
-        if answer.address then
-            resolved[answer.address] = true
-        end
-    end
-
-    local resolved_list = {}
-    for ip, _ in pairs(resolved) do
-        resolved_list[#resolved_list + 1] = ip
-    end
-
-    table.sort(resolved_list)
-    local resolved_str = table.concat(resolved_list, ",")
     set_var("spike_resolved", resolved_str)
 
     if resolved[dst_ip] then
@@ -443,7 +513,7 @@ local ok, runtime_err = xpcall(function()
             dst_ip = dst_ip,
             resolved = resolved_str,
             sni_allowed = sni_allowed,
-            dns_resolver = DNS_RESOLVER,
+            dns_resolver = dns_resolver_used,
         })
         return
     end
@@ -456,7 +526,7 @@ local ok, runtime_err = xpcall(function()
         dst_ip = dst_ip,
         resolved = resolved_str,
         sni_allowed = sni_allowed,
-        dns_resolver = DNS_RESOLVER,
+        dns_resolver = dns_resolver_used,
         record_content_type = clienthello.record_content_type,
         record_version = clienthello.record_version,
         record_len = clienthello.record_len,
