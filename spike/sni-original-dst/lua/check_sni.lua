@@ -1,14 +1,18 @@
 -- check_sni.lua
 --
--- Runs in stream preread phase. Compares the kernel-recorded original
--- destination (exposed by ngx_stream_original_dst_module as $original_dst)
--- against the fresh DNS resolution of the SNI extracted by ssl_preread.
+-- Stream preread policy:
+--   * recover the pre-NAT destination from $original_dst (set by the C module)
+--   * parse the ClientHello ourselves to recover SNI
+--   * resolve that SNI
+--   * allow only if dst_ip is one of the resolved A records
 --
--- This version is intentionally verbose while we debug the spike. It logs:
---   * phase entry and key inputs
---   * env var visibility
---   * require()/resolver init/query failures
---   * the final decision written to both error log and $spike_decision
+-- Logging model:
+--   * default runtime: quiet on allow, WARN on spoof mismatch, ERR on internal failures
+--   * debug runtime: set SPIKE_DEBUG=1 for step-by-step diagnostic logs
+
+local ENFORCE = (os.getenv("ENFORCE") or "1") == "1"
+local DEBUG = (os.getenv("SPIKE_DEBUG") or "0") == "1"
+local DNS_RESOLVER = os.getenv("DNS_RESOLVER") or "1.1.1.1"
 
 local function q(value)
     if value == nil then
@@ -30,76 +34,72 @@ local function set_var(name, value)
     end
 end
 
-local function append_trace(step)
-    local parts = ngx.ctx.spike_trace_parts
-
-    if not parts then
-        parts = {}
-        ngx.ctx.spike_trace_parts = parts
-    end
-
-    parts[#parts + 1] = step
-    local joined = table.concat(parts, ">")
-    ngx.ctx.spike_trace = joined
-    set_var("spike_trace", joined)
-
-    return joined
-end
-
-local function emit(level, event, extra)
+local function log_event(level, event, fields)
     local parts = {
         'spike_lua="check_sni"',
         'event=' .. q(event),
-        'phase=' .. q(ngx.get_phase()),
-        'trace=' .. q(ngx.ctx.spike_trace or ""),
-        'client=' .. q(ngx.var.remote_addr or ""),
-        'sni=' .. q(ngx.var.ssl_preread_server_name or ""),
-        'effective_sni=' .. q(ngx.var.spike_sni or ""),
-        'sni_source=' .. q(ngx.var.spike_sni_source or ""),
-        'original_dst=' .. q(ngx.var.original_dst or ""),
     }
 
-    if extra then
-        for key, value in pairs(extra) do
-            parts[#parts + 1] = key .. "=" .. q(value)
+    local ordered_keys = {
+        "decision",
+        "sni",
+        "original_dst",
+        "dst_ip",
+        "resolved",
+        "dns_resolver",
+        "record_content_type",
+        "record_version",
+        "record_len",
+        "handshake_type",
+        "handshake_len",
+        "client_hello_version",
+        "session_id_len",
+        "cipher_suites_len",
+        "cipher_suite_count",
+        "compression_methods_len",
+        "extensions_len",
+        "extension_count",
+        "err",
+    }
+
+    if fields then
+        for _, key in ipairs(ordered_keys) do
+            local value = fields[key]
+            if value ~= nil and value ~= "" then
+                parts[#parts + 1] = key .. "=" .. q(value)
+            end
         end
     end
 
     ngx.log(level, table.concat(parts, " "))
 end
 
-local function decide(decision, extra)
-    set_var("spike_decision", decision)
-    append_trace("decision:" .. decision)
-    emit(ngx.WARN, "decision", extra or { decision = decision })
+local function debug_log(event, fields)
+    if DEBUG then
+        log_event(ngx.NOTICE, event, fields)
+    end
 end
 
-local function fail(decision, extra, enforce)
-    decide(decision, extra)
+local function set_decision(decision)
+    set_var("spike_decision", decision)
+end
 
-    if enforce then
-        append_trace("enforce_exit")
-        emit(ngx.ERR, "enforcing_close", { decision = decision })
+local function fail_internal(event, fields)
+    set_decision(event)
+    log_event(ngx.ERR, event, fields)
+    if ENFORCE then
         return ngx.exit(ngx.ERROR)
     end
-
-    append_trace("observe_only_return")
-    emit(ngx.WARN, "observe_only_return", { decision = decision })
-    return
 end
 
-local function format_nameservers(nameservers)
-    local formatted = {}
-
-    for _, nameserver in ipairs(nameservers) do
-        if type(nameserver) == "table" then
-            formatted[#formatted + 1] = table.concat(nameserver, ":")
-        else
-            formatted[#formatted + 1] = tostring(nameserver)
-        end
+local function fail_quiet(decision)
+    set_decision(decision)
+    if DEBUG then
+        log_event(ngx.NOTICE, decision, nil)
     end
-
-    return table.concat(formatted, ",")
+    if ENFORCE then
+        return ngx.exit(ngx.ERROR)
+    end
 end
 
 local function u16(data, pos)
@@ -122,9 +122,15 @@ local function u24(data, pos)
     return b1 * 65536 + b2 * 256 + b3
 end
 
-local function peek_client_hello_record()
-    append_trace("peek_tls_header")
+local function hex_u16(byte1, byte2)
+    if not byte1 or not byte2 then
+        return nil
+    end
 
+    return string.format("0x%02x%02x", byte1, byte2)
+end
+
+local function peek_client_hello_record()
     local sock, sock_err = ngx.req.socket()
     if not sock then
         return nil, "req_socket:" .. tostring(sock_err)
@@ -135,22 +141,14 @@ local function peek_client_hello_record()
         return nil, "peek_tls_header:" .. tostring(header_err)
     end
 
-    local content_type = header:byte(1)
     local record_len = u16(header, 4)
     if not record_len then
         return nil, "short_tls_header"
     end
 
-    emit(ngx.WARN, "peeked_tls_header", {
-        content_type = content_type,
-        record_len = record_len,
-    })
-
     if record_len < 4 then
         return nil, "bad_tls_record_length:" .. tostring(record_len)
     end
-
-    append_trace("peek_tls_record")
 
     local total = 5 + record_len
     local record, record_err = sock:peek(total)
@@ -158,68 +156,74 @@ local function peek_client_hello_record()
         return nil, "peek_tls_record:" .. tostring(record_err)
     end
 
-    emit(ngx.WARN, "peeked_tls_record", {
-        total = total,
-        handshake_type = record:byte(6),
-    })
-
     return record
 end
 
-local function parse_sni_from_client_hello(record)
+local function parse_client_hello(record)
     if #record < 9 then
         return nil, "short_tls_record"
     end
 
-    if record:byte(1) ~= 22 then
-        return nil, "unexpected_tls_content_type:" .. tostring(record:byte(1))
+    local info = {
+        record_content_type = record:byte(1),
+        record_version = hex_u16(record:byte(2), record:byte(3)),
+        record_len = u16(record, 4),
+        handshake_type = record:byte(6),
+        handshake_len = u24(record, 7),
+    }
+
+    if info.record_content_type ~= 22 then
+        return nil, "unexpected_tls_content_type:" .. tostring(info.record_content_type)
     end
 
-    if record:byte(6) ~= 1 then
-        return nil, "unexpected_handshake_type:" .. tostring(record:byte(6))
+    if info.handshake_type ~= 1 then
+        return nil, "unexpected_handshake_type:" .. tostring(info.handshake_type)
     end
 
-    local handshake_len = u24(record, 7)
-    if not handshake_len then
+    if not info.handshake_len then
         return nil, "short_handshake_header"
     end
 
-    if #record < 9 + handshake_len then
+    if #record < 9 + info.handshake_len then
         return nil, "truncated_handshake"
     end
 
     local pos = 10
-    pos = pos + 2   -- client_version
-    pos = pos + 32  -- random
+    info.client_hello_version = hex_u16(record:byte(pos), record:byte(pos + 1))
+    pos = pos + 2
+    pos = pos + 32
 
-    local session_id_len = record:byte(pos)
-    if not session_id_len then
+    info.session_id_len = record:byte(pos)
+    if not info.session_id_len then
         return nil, "missing_session_id_length"
     end
-    pos = pos + 1 + session_id_len
+    pos = pos + 1 + info.session_id_len
 
-    local cipher_suites_len = u16(record, pos)
-    if not cipher_suites_len then
+    info.cipher_suites_len = u16(record, pos)
+    if not info.cipher_suites_len then
         return nil, "missing_cipher_suites_length"
     end
-    pos = pos + 2 + cipher_suites_len
+    info.cipher_suite_count = info.cipher_suites_len / 2
+    pos = pos + 2 + info.cipher_suites_len
 
-    local compression_methods_len = record:byte(pos)
-    if not compression_methods_len then
+    info.compression_methods_len = record:byte(pos)
+    if not info.compression_methods_len then
         return nil, "missing_compression_methods_length"
     end
-    pos = pos + 1 + compression_methods_len
+    pos = pos + 1 + info.compression_methods_len
 
-    local extensions_len = u16(record, pos)
-    if not extensions_len then
+    info.extensions_len = u16(record, pos)
+    if not info.extensions_len then
         return nil, "missing_extensions_length"
     end
     pos = pos + 2
 
-    local extensions_end = pos + extensions_len - 1
+    local extensions_end = pos + info.extensions_len - 1
     if extensions_end > #record then
         return nil, "truncated_extensions"
     end
+
+    info.extension_count = 0
 
     while pos + 3 <= extensions_end do
         local ext_type = u16(record, pos)
@@ -228,6 +232,7 @@ local function parse_sni_from_client_hello(record)
             return nil, "truncated_extension_header"
         end
 
+        info.extension_count = info.extension_count + 1
         pos = pos + 4
 
         if pos + ext_len - 1 > extensions_end then
@@ -262,7 +267,8 @@ local function parse_sni_from_client_hello(record)
 
                 local name = record:sub(list_pos, list_pos + name_len - 1)
                 if name_type == 0 then
-                    return name
+                    info.sni = name
+                    return info
                 end
 
                 list_pos = list_pos + name_len
@@ -278,119 +284,116 @@ local function parse_sni_from_client_hello(record)
 end
 
 local ok, runtime_err = xpcall(function()
-    append_trace("entered")
-    emit(ngx.WARN, "entered", {
-        subsystem = ngx.config.subsystem,
-        package_path = package.path,
-    })
-
-    local enforce_raw = os.getenv("ENFORCE")
-    local dns_resolver_raw = os.getenv("DNS_RESOLVER")
-    local enforce = (enforce_raw or "1") == "1"
-    local nameservers = { dns_resolver_raw or "1.1.1.1" }
-    local sni = ngx.var.ssl_preread_server_name
     local original_dst = ngx.var.original_dst
 
-    set_var("spike_decision", "entered")
-    set_var("spike_sni", sni or "")
-    set_var("spike_sni_source", "")
+    set_var("spike_decision", "")
+    set_var("spike_sni", "")
     set_var("spike_dst_ip", "")
     set_var("spike_resolved", "")
-    emit(ngx.WARN, "inputs", {
-        enforce = tostring(enforce),
-        enforce_raw = enforce_raw,
-        dns_resolver_raw = dns_resolver_raw,
-        nameservers = format_nameservers(nameservers),
-    })
-
-    if not sni or sni == "" then
-        append_trace("sni_empty_before_peek")
-        emit(ngx.WARN, "sni_empty_before_peek")
-
-        local record, peek_err = peek_client_hello_record()
-        if not record then
-            return fail("drop_client_hello_peek_failed", { err = peek_err }, enforce)
-        end
-
-        local buffered_sni = ngx.var.ssl_preread_server_name
-        if buffered_sni and buffered_sni ~= "" then
-            sni = buffered_sni
-            set_var("spike_sni", sni)
-            set_var("spike_sni_source", "ssl_preread_after_peek")
-            append_trace("sni_from_ssl_preread_after_peek")
-            emit(ngx.WARN, "sni_from_ssl_preread_after_peek")
-        else
-            append_trace("manual_sni_parse")
-
-            local parsed_sni, parse_err = parse_sni_from_client_hello(record)
-            if not parsed_sni or parsed_sni == "" then
-                return fail("drop_no_sni", { err = parse_err or "manual_parse_returned_empty" }, enforce)
-            end
-
-            sni = parsed_sni
-            set_var("spike_sni", sni)
-            set_var("spike_sni_source", "manual_clienthello_parse")
-            append_trace("sni_from_manual_parse")
-            emit(ngx.WARN, "sni_from_manual_parse", { parsed_sni = parsed_sni })
-        end
-    else
-        set_var("spike_sni", sni)
-        set_var("spike_sni_source", "ssl_preread_initial")
-        append_trace("sni_from_ssl_preread_initial")
-    end
 
     if not original_dst or original_dst == "" then
-        append_trace("missing_original_dst")
-        return fail("drop_no_original_dst", {
-            reason = "iptables REDIRECT likely missing",
-        }, enforce)
+        return fail_internal("missing_original_dst", {
+            original_dst = original_dst,
+            dns_resolver = DNS_RESOLVER,
+            err = "iptables REDIRECT likely missing",
+        })
     end
 
     local dst_ip = original_dst:match("^([^:]+):")
     if not dst_ip then
-        append_trace("bad_original_dst")
-        return fail("drop_bad_original_dst", nil, enforce)
+        return fail_internal("bad_original_dst", {
+            original_dst = original_dst,
+            dns_resolver = DNS_RESOLVER,
+        })
     end
     set_var("spike_dst_ip", dst_ip)
 
-    append_trace("require_resolver")
-    local require_ok, resolver_mod = pcall(require, "resty.dns.resolver")
-    if not require_ok then
-        return fail("drop_require_failed", {
-            err = resolver_mod,
-            package_path = package.path,
-        }, enforce)
+    local record, peek_err = peek_client_hello_record()
+    if not record then
+        return fail_internal("client_hello_peek_failed", {
+            original_dst = original_dst,
+            dst_ip = dst_ip,
+            dns_resolver = DNS_RESOLVER,
+            err = peek_err,
+        })
     end
 
-    append_trace("resolver_new")
+    local clienthello, parse_err = parse_client_hello(record)
+    if not clienthello then
+        if parse_err == "sni_extension_not_found" or parse_err == "no_host_name_in_sni_extension" then
+            debug_log("missing_sni", {
+                original_dst = original_dst,
+                dst_ip = dst_ip,
+                dns_resolver = DNS_RESOLVER,
+            })
+            return fail_quiet("drop_no_sni")
+        end
+
+        return fail_internal("client_hello_parse_failed", {
+            original_dst = original_dst,
+            dst_ip = dst_ip,
+            dns_resolver = DNS_RESOLVER,
+            err = parse_err,
+        })
+    end
+
+    set_var("spike_sni", clienthello.sni or "")
+
+    debug_log("client_hello_parsed", {
+        sni = clienthello.sni,
+        original_dst = original_dst,
+        dst_ip = dst_ip,
+        dns_resolver = DNS_RESOLVER,
+        record_content_type = clienthello.record_content_type,
+        record_version = clienthello.record_version,
+        record_len = clienthello.record_len,
+        handshake_type = clienthello.handshake_type,
+        handshake_len = clienthello.handshake_len,
+        client_hello_version = clienthello.client_hello_version,
+        session_id_len = clienthello.session_id_len,
+        cipher_suites_len = clienthello.cipher_suites_len,
+        cipher_suite_count = clienthello.cipher_suite_count,
+        compression_methods_len = clienthello.compression_methods_len,
+        extensions_len = clienthello.extensions_len,
+        extension_count = clienthello.extension_count,
+    })
+
+    local require_ok, resolver_mod = pcall(require, "resty.dns.resolver")
+    if not require_ok then
+        return fail_internal("resolver_require_failed", {
+            sni = clienthello.sni,
+            original_dst = original_dst,
+            dst_ip = dst_ip,
+            dns_resolver = DNS_RESOLVER,
+            err = resolver_mod,
+        })
+    end
+
     local resolver, resolver_err = resolver_mod:new({
-        nameservers = nameservers,
+        nameservers = { DNS_RESOLVER },
         retrans = 2,
         timeout = 1500,
     })
     if not resolver then
-        return fail("drop_resolver_init_failed", { err = resolver_err }, enforce)
+        return fail_internal("resolver_init_failed", {
+            sni = clienthello.sni,
+            original_dst = original_dst,
+            dst_ip = dst_ip,
+            dns_resolver = DNS_RESOLVER,
+            err = resolver_err,
+        })
     end
 
-    append_trace("resolver_query")
-    emit(ngx.WARN, "querying_dns", {
-        sni = sni,
-        dst_ip = dst_ip,
-        nameservers = format_nameservers(nameservers),
-    })
-
-    local answers, query_err = resolver:query(sni, { qtype = resolver.TYPE_A })
+    local answers, query_err = resolver:query(clienthello.sni, { qtype = resolver.TYPE_A })
     if not answers or answers.errcode then
-        return fail("drop_resolve_failed", {
+        return fail_internal("resolver_query_failed", {
+            sni = clienthello.sni,
+            original_dst = original_dst,
+            dst_ip = dst_ip,
+            dns_resolver = DNS_RESOLVER,
             err = query_err or (answers and answers.errstr),
-            errcode = answers and answers.errcode,
-        }, enforce)
+        })
     end
-
-    append_trace("answers_received")
-    emit(ngx.WARN, "answers_received", {
-        answer_count = #answers,
-    })
 
     local resolved = {}
     for _, answer in ipairs(answers) do
@@ -409,31 +412,51 @@ local ok, runtime_err = xpcall(function()
     set_var("spike_resolved", resolved_str)
 
     if resolved[dst_ip] then
-        append_trace("resolved_match")
-        decide("allow", {
-            decision = "allow",
+        set_decision("allow")
+        debug_log("allow", {
+            sni = clienthello.sni,
+            original_dst = original_dst,
             dst_ip = dst_ip,
             resolved = resolved_str,
-            sni = sni,
-            sni_source = ngx.var.spike_sni_source,
+            dns_resolver = DNS_RESOLVER,
         })
         return
     end
 
-    append_trace("resolved_mismatch")
-    return fail("mismatch", {
+    set_decision("mismatch")
+    log_event(ngx.WARN, "sni_spoofing_detected", {
+        decision = "mismatch",
+        sni = clienthello.sni,
+        original_dst = original_dst,
         dst_ip = dst_ip,
         resolved = resolved_str,
-        sni = sni,
-        sni_source = ngx.var.spike_sni_source,
-    }, enforce)
+        dns_resolver = DNS_RESOLVER,
+        record_content_type = clienthello.record_content_type,
+        record_version = clienthello.record_version,
+        record_len = clienthello.record_len,
+        handshake_type = clienthello.handshake_type,
+        handshake_len = clienthello.handshake_len,
+        client_hello_version = clienthello.client_hello_version,
+        session_id_len = clienthello.session_id_len,
+        cipher_suites_len = clienthello.cipher_suites_len,
+        cipher_suite_count = clienthello.cipher_suite_count,
+        compression_methods_len = clienthello.compression_methods_len,
+        extensions_len = clienthello.extensions_len,
+        extension_count = clienthello.extension_count,
+    })
+
+    if ENFORCE then
+        return ngx.exit(ngx.ERROR)
+    end
 end, function(err)
     return debug.traceback(err, 2)
 end)
 
 if not ok then
-    append_trace("exception")
-    set_var("spike_decision", "drop_lua_exception")
-    emit(ngx.ERR, "exception", { err = runtime_err })
+    set_decision("lua_exception")
+    log_event(ngx.ERR, "lua_exception", {
+        dns_resolver = DNS_RESOLVER,
+        err = runtime_err,
+    })
     return ngx.exit(ngx.ERROR)
 end

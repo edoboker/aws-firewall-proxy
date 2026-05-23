@@ -1,35 +1,43 @@
-# Spike: SO_ORIGINAL_DST retrieval from nginx + stream-lua
+# Spike: SO_ORIGINAL_DST from nginx stream Lua
 
 ## What this proves
 
-Production-grade plan §20 calls for surfacing the gap between the SNI a client claims and the IP it is actually connecting to, so SNI spoofing becomes detectable and droppable instead of being silently corrected by the proxy's re-resolution.
+This spike proves the end-to-end detection path for SNI spoofing:
 
-This spike now proves the full path end-to-end:
+- a tiny C stream module exposes Linux `SO_ORIGINAL_DST` to nginx as `$original_dst`
+- Lua in stream preread parses the TLS ClientHello itself to recover SNI
+- Lua resolves that SNI, compares the resolved A-record set to `$original_dst`, and drops mismatches
+- nginx then proxies only the connections that passed the check
 
-- A tiny C stream module can expose Linux `SO_ORIGINAL_DST` to nginx as `$original_dst`.
-- Lua in nginx stream preread can recover the effective SNI, resolve it, compare it to `$original_dst`, log the full resolved set, and drop mismatches.
-- The working hostname field in this spike is **`$spike_sni`**, not nginx's builtin `$ssl_preread_server_name`.
+The important hostname field in this spike is **`$spike_sni`**, not nginx's builtin `$ssl_preread_server_name`.
 
-## Current result
+## Current behavior
 
-The spike currently works with these behaviors:
+In the default runtime mode:
 
-- Happy path: the TLS handshake completes and logs `spike_decision="allow"`.
-- Spoof path: the connection is reset during preread and logs `spike_decision="mismatch"`.
-- The resolved A-record set is visible in both the verbose Lua preread logs and the JSON access log as `spike_resolved`.
+- a normal connection is allowed and stays quiet
+- an SNI spoofing attempt is dropped during preread
+- the only expected warning log is the spoofing warning
+- internal failures such as parse or DNS errors log at `ERR`
+- nginx connection-level chatter is suppressed by using `error_log ... warn`
 
-Sample decision lines:
+Example spoofing warning:
 
 ```text
-... spike_lua="check_sni" event="decision" ... effective_sni="www.google.com" ... decision="allow" resolved="142.251.150.119,142.251.151.119,..."
-... spike_lua="check_sni" event="decision" ... effective_sni="www.google.com" ... decision="mismatch" dst_ip="192.0.2.1" resolved="142.251.150.119,142.251.151.119,..."
+... spike_lua="check_sni" event="sni_spoofing_detected" decision="mismatch" sni="www.google.com" original_dst="192.0.2.1:443" dst_ip="192.0.2.1" resolved="142.251.150.119,142.251.151.119,..." dns_resolver="1.1.1.1" record_version="0x0301" record_len="512" handshake_type="1" handshake_len="508" client_hello_version="0x0303" session_id_len="32" cipher_suites_len="36" cipher_suite_count="18" compression_methods_len="1" extensions_len="397" extension_count="11"
 ```
 
-Sample JSON access lines:
+If you opt into the JSON access log for debugging, the useful fields are:
+
+- `spike_sni`
+- `spike_dst_ip`
+- `spike_resolved`
+- `spike_decision`
+
+Example JSON access line:
 
 ```json
-{"sni":"-","spike_sni":"www.google.com","spike_sni_source":"manual_clienthello_parse","spike_dst_ip":"142.251.156.119","spike_resolved":"142.251.150.119,142.251.151.119,142.251.152.119,142.251.153.119,142.251.154.119,142.251.155.119,142.251.156.119,142.251.157.119","original_dst":"142.251.156.119:443","client":"172.17.0.2","status":"200","spike_decision":"allow","spike_trace":"entered>...>decision:allow"}
-{"sni":"-","spike_sni":"www.google.com","spike_sni_source":"manual_clienthello_parse","spike_dst_ip":"192.0.2.1","spike_resolved":"142.251.150.119,142.251.151.119,142.251.152.119,142.251.153.119,142.251.154.119,142.251.155.119,142.251.156.119,142.251.157.119","original_dst":"192.0.2.1:443","client":"172.17.0.2","status":"500","spike_decision":"mismatch","spike_trace":"entered>...>decision:mismatch>enforce_exit"}
+{"spike_sni":"www.google.com","spike_dst_ip":"142.251.156.119","spike_resolved":"142.251.150.119,142.251.151.119,142.251.152.119,142.251.153.119,142.251.154.119,142.251.155.119,142.251.156.119,142.251.157.119","original_dst":"142.251.156.119:443","client":"172.17.0.2","status":"200","spike_decision":"allow"}
 ```
 
 ## How to run
@@ -43,182 +51,246 @@ docker exec sni-spike bash /test/spike.sh
 docker logs sni-spike
 ```
 
-To use a different resolver for both nginx and Lua:
+The packaged probe now behaves like this:
+
+- Probe A: TLS handshake succeeds and the default runtime stays quiet
+- Probe B: TLS handshake is dropped and logs `event="sni_spoofing_detected"`
+
+Useful default log filter:
 
 ```powershell
-docker run --rm -d --name sni-spike --cap-add=NET_ADMIN -e DNS_RESOLVER=1.1.1.1 sni-spike
+docker logs sni-spike 2>&1 | Select-String 'sni_spoofing_detected|client_hello_|resolver_|missing_original_dst|bad_original_dst|lua_exception'
 ```
 
-Useful log filter:
+`/test/spike.sh` waits for `/ready` before firing probes, so you do not have to race startup.
+
+## Runtime logging modes
+
+There are now two intentionally separate logging modes.
+
+### Default runtime mode
+
+This is the production-like mode:
+
+- no step-by-step Lua logs on allow
+- no per-connection JSON access log
+- one structured `WARN` for spoofing mismatches
+- `ERR` only for internal failures
+- nginx's own connection logs are suppressed
+
+This is the mode you should use if you only want to see suspected SNI spoofing attempts.
+
+### Debug runtime mode
+
+Use one or more of these when diagnosing behavior:
+
+1. Set `SPIKE_DEBUG=1`
 
 ```powershell
-docker logs sni-spike 2>&1 | Select-String 'spike_decision|spike_resolved|querying_dns|answers_received|spike_sni'
+docker run --rm -d --name sni-spike --cap-add=NET_ADMIN -e SPIKE_DEBUG=1 sni-spike
 ```
 
-`/test/spike.sh` now waits for `/ready` before firing probes, so you do not have to race container startup.
+This does two things:
 
-## Making NGINX Work with Custom Lua and C
+- `lua/check_sni.lua` emits structured `NOTICE` logs such as `client_hello_parsed` and `allow`
+- the entrypoint renders nginx with `error_log ... notice` so those debug notices are visible
+
+2. Enable the extra log-phase summary hook
+
+In [`nginx.conf`](./nginx.conf), uncomment:
+
+```nginx
+# log_by_lua_file /usr/local/openresty/nginx/lua/debug_log_by_lua.lua;
+```
+
+That enables [`lua/debug_log_by_lua.lua`](./lua/debug_log_by_lua.lua), which emits one extra per-session summary line at `NOTICE`.
+
+3. Enable the JSON access log
+
+In [`nginx.conf`](./nginx.conf), replace:
+
+```nginx
+access_log off;
+```
+
+with:
+
+```nginx
+access_log /dev/stderr spike;
+```
+
+That gives you one structured JSON line per proxied connection.
+
+Because [`nginx.conf`](./nginx.conf) is copied into the image as a template, any template change requires a rebuild:
+
+```powershell
+docker build -t sni-spike spike/sni-original-dst
+```
+
+## Making nginx work with custom Lua and C
 
 ### Why the original design did not work
 
-Several independent issues had to be fixed before the spike actually exercised the intended path:
+Several issues had to be fixed before the spike actually enforced anything:
 
-1. `check_sni.lua` existed, but nginx was not executing it. The stream server had only a debug `preread_by_lua_block`.
-2. Once Lua was wired in, the default postponed preread hook still did not fire in this REDIRECT proxy path.
-3. Enabling `preread_by_lua_no_postpone on;` made Lua run early enough, but at that point nginx had **not** populated `$ssl_preread_server_name` yet.
-4. nginx's upstream resolver and Lua's DNS resolver were configured separately, so they could drift.
-5. The JSON access log showed nginx's builtin SNI field, which is usually empty in the working configuration and therefore misleading.
-6. The test script could race nginx startup.
+1. `check_sni.lua` existed, but nginx was not executing it. The config still had only a small debug `preread_by_lua_block`.
+2. After wiring Lua in, the default postponed preread hook still did not fire in this REDIRECT proxy path.
+3. Forcing preread earlier with `preread_by_lua_no_postpone on;` made Lua run, but nginx had still not populated `$ssl_preread_server_name`.
+4. nginx's upstream resolver and Lua's DNS resolver were configured independently, so they could drift.
+5. The old logs mixed nginx builtin fields, Lua-derived fields, and very long trace strings, which made the output hard to read.
+6. The test probe could race nginx startup.
 
-The net effect was: traffic proxied, but the security logic either never ran or ran too early to use nginx's builtin SNI field.
+The net effect was that traffic could proxy, but the actual security decision path either never ran or ran too early to use nginx's builtin SNI field.
 
 ### What changed
 
 #### C side
 
-- [`c-module/ngx_stream_original_dst_module.c`](./c-module/ngx_stream_original_dst_module.c) is still intentionally tiny.
-- It calls `getsockopt(SO_ORIGINAL_DST)` on `s->connection->fd`.
-- It exposes the result as stream variable `$original_dst`.
-- It contains no policy logic, DNS logic, or drop logic.
+- [`c-module/ngx_stream_original_dst_module.c`](./c-module/ngx_stream_original_dst_module.c) stays intentionally small
+- it calls `getsockopt(SO_ORIGINAL_DST)` on the accepted socket
+- it exposes the result as stream variable `$original_dst`
+- it does not do DNS, policy, or drop logic
 
-This is still the minimum-C part of the design.
+This keeps the minimum privileged wire-up in C and leaves policy in Lua.
 
 #### Lua side
 
-- [`lua/check_sni.lua`](./lua/check_sni.lua) now owns the whole decision path.
-- It runs in **stream preread**.
-- It logs phase entry, env visibility, ClientHello parsing, DNS querying, answer counts, resolved IPs, and final decisions.
-- It sets helper variables used later in logs:
+- [`lua/check_sni.lua`](./lua/check_sni.lua) now owns the policy path
+- it runs in stream preread
+- it peeks the ClientHello bytes and parses SNI itself
+- it resolves the parsed hostname with `lua-resty-dns`
+- it compares the resolved A-record set to `$original_dst`
+- it sets the nginx variables used later for debugging:
   - `$spike_sni`
-  - `$spike_sni_source`
   - `$spike_dst_ip`
   - `$spike_resolved`
   - `$spike_decision`
-  - `$spike_trace`
-- [`lua/log_session.lua`](./lua/log_session.lua) runs in **stream log phase** and emits a summary even if you only want one per-connection line.
+- it is quiet on allow in normal mode
+- it emits one structured spoofing `WARN` on mismatch
+- it emits `ERR` only for real internal failures
+- if `SPIKE_DEBUG=1`, it emits readable `NOTICE` logs instead of one giant trace string
+
+[`lua/debug_log_by_lua.lua`](./lua/debug_log_by_lua.lua) is now explicitly debug-only. It is not part of the enforcement path and is disabled by default.
 
 #### nginx side
 
-- [`nginx.conf`](./nginx.conf) is now treated as a template.
-- nginx runs Lua in preread with `preread_by_lua_no_postpone on;`.
-- `proxy_pass` uses `$spike_sni`, not `$ssl_preread_server_name`.
-- The JSON access log includes the useful spike fields, including the resolved IP set.
+- [`nginx.conf`](./nginx.conf) is treated as a template and rendered at container boot
+- `preread_by_lua_no_postpone on;` forces the Lua preread hook to run early enough in this REDIRECT path
+- `proxy_pass` uses `$spike_sni`, not `$ssl_preread_server_name`
+- the builtin `ssl_preread` path is no longer part of the decision logic
+- the default template disables the access log so production-style runs stay quiet
 
 #### Boot sequence
 
-1. Docker multi-stage build compiles the dynamic C module against vanilla nginx with `--with-compat`.
-2. The runtime image uses `openresty/openresty:1.27.1.1-alpine`, which already includes stream-lua support.
-3. The built `.so` is copied into OpenResty's module directory.
-4. The nginx config template, Lua files, and test script are copied into the image.
+1. The Docker multi-stage build compiles the dynamic C module against vanilla nginx with `--with-compat`.
+2. The runtime image uses `openresty/openresty:1.27.1.1-alpine`, which already includes stream Lua support.
+3. The compiled `.so` is copied into OpenResty's module directory and loaded with `load_module`.
+4. The nginx config template, Lua files, and probe script are copied into the image.
 5. At container start, [`entrypoint.sh`](./entrypoint.sh):
    - renders `nginx.conf` from the template using `DNS_RESOLVER`
+   - renders nginx's error log level as `warn` by default or `notice` when `SPIKE_DEBUG=1`
+   - exports `SPIKE_DEBUG` for nginx worker visibility
    - installs the iptables REDIRECT rules
-   - excludes nginx's own worker UID from OUTPUT redirection
-   - launches OpenResty in the foreground
+   - excludes nginx's own worker UID from the OUTPUT redirect
+   - stays quiet by default apart from actual warnings and errors
+   - starts OpenResty in the foreground
 
 ### How the request path works now
 
-1. Client connects to TCP/443.
+1. A client connects to TCP/443.
 2. iptables REDIRECT sends it to nginx on 8443.
-3. The C module surfaces the pre-NAT target as `$original_dst`.
-4. Lua preread runs early because of `preread_by_lua_no_postpone on;`.
-5. Because builtin `ssl_preread` is still empty at that exact point, Lua peeks the ClientHello bytes itself and parses the SNI manually.
-6. Lua stores the effective hostname in `$spike_sni`.
-7. Lua resolves `$spike_sni` via `lua-resty-dns`.
-8. Lua compares the resolved set to `$original_dst`.
-9. On match, proxying continues.
-10. On mismatch, Lua exits with error and the handshake is reset.
-11. Log phase emits a final per-session summary.
+3. The C module exposes the original pre-NAT destination as `$original_dst`.
+4. Lua runs in the stream preread phase because of `preread_by_lua_no_postpone on;`.
+5. Lua peeks the first TLS record and parses the ClientHello itself.
+6. Lua extracts SNI into `$spike_sni`.
+7. Lua resolves `$spike_sni`.
+8. Lua compares the resolved set to the IP from `$original_dst`.
+9. On match, the proxy continues to `$spike_sni:443`.
+10. On mismatch, Lua logs `sni_spoofing_detected` and aborts the connection.
 
-## Useful SNI and JSON Access Log Caveat
+### Why preread phase still matters even though builtin `ssl_preread` does not
 
-The most important logging caveat in this spike is:
+We still need the **preread phase** because that is where nginx stream Lua can inspect the TCP bytes before proxying starts.
 
-- **`$ssl_preread_server_name` is not the useful field in the working configuration.**
+We do **not** need nginx's builtin `ssl_preread` parser anymore, because the working path now parses the ClientHello directly in Lua. Those are two different things:
 
-Because preread Lua has to run before nginx has filled the builtin variable, the JSON access log often shows:
+- preread phase: the lifecycle phase where the bytes are available
+- `ssl_preread`: nginx's builtin TLS metadata parser
 
-```json
-"sni":"-"
-```
+This spike still depends on the first and no longer depends on the second.
 
-That is expected in this spike. The fields you should actually look at are:
+## JSON access log caveat
 
-- `spike_sni`
-- `spike_sni_source`
-- `spike_dst_ip`
-- `spike_resolved`
-- `spike_decision`
-- `spike_trace`
+The JSON access log is now a debug aid, not the default runtime log.
 
-So the JSON access log is useful, but only if you treat `spike_sni` as the real hostname field.
+If you enable it, the most important caveat is still:
 
-## Shared DNS Resolver Setting
+- **`$spike_sni` is the useful hostname field**
 
-The spike now uses **one shared resolver setting** for both nginx and Lua:
+Do not add nginx's builtin `$ssl_preread_server_name` back into the JSON line unless you are intentionally comparing parsers. In this working configuration it is not the field that drives the policy decision, and logging both host fields just makes the output noisy and confusing.
 
-- Env var name: `DNS_RESOLVER`
-- nginx consumes it by rendering the config template at boot
+## Shared DNS configuration
+
+The spike now uses one shared resolver setting for both nginx and Lua:
+
+- environment variable: `DNS_RESOLVER`
+- nginx consumes it when [`entrypoint.sh`](./entrypoint.sh) renders [`nginx.conf`](./nginx.conf)
 - Lua consumes it via `os.getenv("DNS_RESOLVER")`
 
-This removes the previous mismatch where nginx and Lua could resolve through different servers.
-
-### How DNS configuration works in practice
-
-There are two different DNS consumers in the spike, and it helps to keep them separate:
-
-1. **nginx + Lua decision path**
-   - This is the security-relevant path.
-   - Both nginx upstream resolution and Lua's `lua-resty-dns` resolution use the single shared `DNS_RESOLVER` value.
-   - In the spike container, that value defaults to `1.1.1.1`.
-
-2. **Other processes in the container**
-   - Tools like `curl`, `getent`, or shell utilities use the container's normal libc resolver path, usually `/etc/resolv.conf`.
-   - That is separate from nginx's `resolver` directive.
-
-This means that for the spike's "Probe A" happy path, `curl` chooses the initial destination IP using the container resolver, while nginx/Lua validate the SNI using `DNS_RESOLVER`. Those usually overlap for `www.google.com`, but they are not literally the same mechanism unless you align them.
+This removes the old mismatch where nginx and Lua could resolve through different servers.
 
 ### Container behavior
 
-In the spike container:
+Inside the spike container there are two DNS paths:
 
-- Default shared resolver for nginx + Lua: `1.1.1.1`
-- Override mechanism: `-e DNS_RESOLVER=<ip>`
+1. nginx plus Lua
+   - this is the security-relevant path
+   - both use the shared `DNS_RESOLVER`
+   - the default is `1.1.1.1`
 
-Examples:
+2. other processes such as `curl`
+   - these use the container's normal resolver path, usually `/etc/resolv.conf`
+   - this is separate from nginx's `resolver` directive
+
+That means Probe A works like this:
+
+- `curl` picks a destination IP using the container resolver
+- nginx and Lua validate the SNI using `DNS_RESOLVER`
+
+Those usually overlap for `www.google.com`, but they are not literally the same mechanism unless you align them.
+
+To override the nginx plus Lua resolver:
 
 ```powershell
-docker run --rm -d --name sni-spike --cap-add=NET_ADMIN sni-spike
 docker run --rm -d --name sni-spike --cap-add=NET_ADMIN -e DNS_RESOLVER=1.1.1.1 sni-spike
 docker run --rm -d --name sni-spike --cap-add=NET_ADMIN -e DNS_RESOLVER=8.8.8.8 sni-spike
 ```
 
-If you want the probe client inside the container to use the same DNS server too, set Docker DNS as well:
+If you also want the probe client in the container to use the same DNS server, set Docker DNS too:
 
 ```powershell
 docker run --rm -d --name sni-spike --cap-add=NET_ADMIN --dns 1.1.1.1 -e DNS_RESOLVER=1.1.1.1 sni-spike
 ```
 
-Without `--dns`, `curl` may still use Docker's default resolver path even though nginx/Lua are using `DNS_RESOLVER`.
+Without `--dns`, `curl` may still use Docker's default resolver path even though nginx and Lua are using `DNS_RESOLVER`.
 
-### EC2 / AWS behavior
+### EC2 and AWS behavior
 
-For the AMI-backed EC2 proxy, the intended default is:
+For the AMI-backed EC2 proxy, the intended default resolver is:
 
-- Resolver: `169.254.169.253`
-- Meaning: AWS Route 53 Resolver / VPC resolver
+- `169.254.169.253`
 
-That is the default packer value because it is the normal AWS choice:
+That is the AWS Route 53 Resolver inside the VPC. It is the normal default because:
 
-- it works inside a VPC without depending on public resolvers
-- it can resolve private Route 53 hosted zones
-- it follows AWS VPC DNS behavior
+- it works without depending on public resolvers
+- it can resolve private Route 53 zones
+- it matches normal VPC DNS behavior
 
-So for ordinary EC2-in-VPC deployment, the expected recommendation is: **do not override DNS unless you have a specific reason**.
+So on ordinary EC2 in a VPC, the recommended default is: do not override DNS unless you have a specific reason.
 
-### Manual `1.1.1.1` on AWS
+### Manually forcing `1.1.1.1`
 
-If you intentionally want the proxy to use `1.1.1.1` instead of the AWS VPC resolver, you can do that, but it is an explicit choice.
+If you intentionally want the proxy to use `1.1.1.1` instead of the AWS VPC resolver, that is still possible.
 
 For the spike container:
 
@@ -232,45 +304,43 @@ For the AMI build:
 packer build -var "dns_resolver=1.1.1.1" .
 ```
 
-Trade-offs of doing that on AWS:
+Trade-offs on AWS:
 
-- you lose the normal "just use the VPC resolver" behavior
+- you lose the default VPC resolver behavior
 - you may lose access to private Route 53 records
-- CDN edge selection may differ from what the workload would have gotten through the VPC resolver
+- CDN edge selection may differ from what the VPC resolver would have returned
 - the instance must actually be able to reach `1.1.1.1:53`
 
-### Why nginx needs this explicit configuration
+### Why nginx needs an explicit resolver
 
-nginx stream proxying does **not** automatically use "whatever the host resolver is" for hostname upstream resolution. The `resolver` directive must be present in nginx config.
+nginx stream proxying does not automatically use "whatever the host resolver is" for hostname upstream resolution. The `resolver` directive must be present in the nginx config.
 
-So the design here is explicit on purpose:
+That is why this design is explicit:
 
-- in the spike container, `entrypoint.sh` renders nginx config from `DNS_RESOLVER`
-- in the EC2 AMI, `provision.sh` renders nginx config from the packer `dns_resolver` var
-
-That makes the resolver choice visible and reproducible instead of implicit.
+- in the spike container, [`entrypoint.sh`](./entrypoint.sh) renders nginx config from `DNS_RESOLVER`
+- in the EC2 AMI, `provision.sh` renders nginx config from the packer `dns_resolver` variable
 
 ### Packer wiring
 
-The AMI build now has a single packer variable too:
+The AMI build also has a single resolver variable:
 
-- Packer var: `dns_resolver`
-- Default in `packer/nginx-proxy/nginx-proxy.pkr.hcl`: `169.254.169.253`
+- packer variable: `dns_resolver`
+- default in `packer/nginx-proxy/nginx-proxy.pkr.hcl`: `169.254.169.253`
 
 During the AMI build:
 
-- `provision.sh` renders `/etc/nginx/nginx.conf` from the template with that resolver value.
-- It also writes `/etc/sysconfig/aws-firewall-proxy-runtime` containing:
+- `provision.sh` renders `/etc/nginx/nginx.conf` with that resolver
+- it also writes `/etc/sysconfig/aws-firewall-proxy-runtime` containing:
 
 ```bash
 DNS_RESOLVER=<value>
 ```
 
-That runtime file is the intended future handoff point for Lua or other runtime logic, so nginx and Lua can consume the same baked value instead of drifting.
+That runtime file is the future handoff point for Lua or other runtime logic so nginx and Lua can consume the same baked resolver value.
 
 ## What "normal ClientHello" means here
 
-In this spike, "normal ClientHello" means:
+In this spike, "normal ClientHello" means the common case:
 
 - TLS over TCP, not QUIC
 - a standard TLS ClientHello record
@@ -278,45 +348,19 @@ In this spike, "normal ClientHello" means:
 - the bytes needed for the parse are available in the preread peek
 - the SNI is plaintext, not hidden by ECH
 
-That covers mainstream clients like curl, OpenSSL, browsers, SDKs, and most ordinary outbound HTTPS traffic.
+That covers normal browser, curl, OpenSSL, and SDK traffic.
 
-## Why the manual ClientHello parse is still spike-shaped
+## Why the manual ClientHello parser is still spike-shaped
 
-The manual parser is good enough for this spike, but it is still more brittle than production-grade protocol handling.
+The current parser is good enough to prove the design, but it is still more brittle than a production-grade protocol parser.
 
 Cases where it can be wrong or insufficient:
 
-- **TLS 1.3 PSK-only resumption without SNI**: no hostname exists to parse.
-- **ECH / encrypted ClientHello**: the real inner SNI is hidden by design.
-- **QUIC**: not TCP, not this parser's protocol.
-- **Non-TLS traffic on port 443**: the first bytes are not a TLS record.
-- **Fragmentation / unusual record layout**: if the full ClientHello is not available the way the parser expects during preread, the parse can fail.
-- **Future maintenance risk**: hand-maintained protocol parsing in Lua is easier to get subtly wrong than relying on nginx/OpenResty builtin parsing paths.
+- TLS 1.3 PSK-only resumption without SNI
+- ECH, where the real inner SNI is hidden
+- QUIC, which is not TCP and not this parser's protocol
+- non-TLS traffic on port 443
+- fragmented or unusual record layouts that are not fully available in the first preread peek
+- the general maintenance risk of hand-maintained wire parsing in Lua
 
-That is why this is "spike-shaped" rather than ideal steady-state programming. It works and proves the technical path, but it also identifies the exact brittle seam: early preread needed custom parsing because the builtin SNI variable was not populated yet.
-
-## Layout
-
-```text
-spike/sni-original-dst/
-├── Dockerfile
-├── c-module/
-│   ├── config
-│   └── ngx_stream_original_dst_module.c
-├── lua/
-│   ├── check_sni.lua
-│   └── log_session.lua
-├── nginx.conf
-├── entrypoint.sh
-├── test/
-│   └── spike.sh
-└── README.md
-```
-
-## Out of scope for this spike
-
-- Integration with `packer/nginx-proxy/` and `terraform/`
-- DNS caching / TTL policy / CNAME handling
-- Performance numbers
-- IPv6 support in the C module
-- Replacing the manual ClientHello parse with a more standard production path
+That is why this is standard engineering for a spike, but not yet the final production implementation.
