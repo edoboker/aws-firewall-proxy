@@ -30,6 +30,9 @@ http {
 
 stream {
     lua_package_path "/etc/nginx/lua/?.lua;;";
+    # DNS fanout can intentionally hit slow or varying resolvers. Keep those
+    # low-level cosocket timeouts out of the error log and rely on the
+    # structured Lua mismatch/internal-failure events instead.
     lua_socket_log_errors off;
 
     lua_add_variable $spike_decision;
