@@ -1,0 +1,65 @@
+load_module /usr/local/openresty/nginx/modules/ngx_stream_original_dst_module.so;
+
+user nginx;
+
+env ENFORCE;
+env DNS_RESOLVER;
+env SPIKE_DEBUG;
+
+worker_processes auto;
+error_log /var/log/nginx/error.log warn;
+pid /var/run/nginx.pid;
+
+events {
+    worker_connections 1024;
+}
+
+http {
+    access_log off;
+
+    server {
+        listen 127.0.0.1:8080;
+
+        location = /ready {
+            return 200 "ok\n";
+        }
+    }
+}
+
+stream {
+    lua_package_path "/etc/nginx/lua/?.lua;;";
+
+    lua_add_variable $spike_decision;
+    lua_add_variable $spike_sni;
+    lua_add_variable $spike_resolved;
+    lua_add_variable $spike_dst_ip;
+
+    resolver __DNS_RESOLVER__ valid=10s ipv6=off;
+    resolver_timeout 5s;
+
+    include /etc/nginx/conf.d/sni_allowlist.conf;
+
+    # The postponed preread hook never fired in this REDIRECT path, so we run
+    # the Lua guard early and recover SNI directly from ClientHello.
+    preread_by_lua_no_postpone on;
+
+    log_format proxy '$remote_addr [$time_local] $protocol $status '
+                     '$bytes_sent $bytes_received $session_time '
+                     'sni="$spike_sni" allowed=$sni_allowed '
+                     'decision="$spike_decision" dst_ip="$spike_dst_ip" '
+                     'original_dst="$original_dst" resolved="$spike_resolved"';
+    access_log /var/log/nginx/access.log proxy;
+
+    server {
+        listen 8443;
+
+        preread_by_lua_file /etc/nginx/lua/check_sni.lua;
+
+        # Debug-only: uncomment for one extra per-session summary line.
+        # log_by_lua_file /etc/nginx/lua/debug_log_by_lua.lua;
+
+        proxy_pass $spike_sni:443;
+        proxy_connect_timeout 10s;
+        proxy_timeout 600s;
+    }
+}

@@ -14,7 +14,7 @@ locals {
 
 # Pre-create the log groups so retention is under our control rather than
 # whatever the CW agent decides on first write (default: never expire).
-# Group names must match packer/nginx-proxy/files/cloudwatch-agent.json.
+# Group names must match packer/nginx-proxy/assets/cloudwatch/amazon-cloudwatch-agent.json.
 resource "aws_cloudwatch_log_group" "proxy_access" {
   name              = local.log_group_access
   retention_in_days = 7
@@ -33,7 +33,7 @@ resource "aws_iam_role_policy_attachment" "proxy_cw_agent" {
 }
 
 # ── Metric filters ────────────────────────────────────────────────────────────
-# nginx log_format `proxy` (packer/nginx-proxy/files/nginx.conf) ends each
+# nginx log_format `proxy` (packer/nginx-proxy/assets/nginx/conf/nginx.conf.template) ends each
 # line with `allowed=1` or `allowed=0`. Substring matching is enough.
 
 resource "aws_cloudwatch_log_metric_filter" "requests_allowed" {

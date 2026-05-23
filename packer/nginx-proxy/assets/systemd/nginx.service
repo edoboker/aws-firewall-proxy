@@ -1,0 +1,20 @@
+[Unit]
+Description=OpenResty transparent proxy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=forking
+PIDFile=/var/run/nginx.pid
+EnvironmentFile=-/etc/sysconfig/aws-firewall-proxy-runtime
+ExecStartPre=/usr/sbin/nginx -t -q -g 'daemon on; master_process on;'
+ExecStart=/usr/sbin/nginx -g 'daemon on; master_process on;'
+ExecReload=/usr/sbin/nginx -g 'daemon on; master_process on;' -s reload
+ExecStop=/bin/kill -s QUIT $MAINPID
+KillMode=mixed
+TimeoutStopSec=5
+LimitNOFILE=65536
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -22,6 +22,12 @@ variable "ami_name_prefix" {
   default = "aws-firewall-proxy-nginx"
 }
 
+variable "dns_resolver" {
+  type        = string
+  default     = "169.254.169.253"
+  description = "Single DNS resolver address baked into the proxy image. Used by both nginx upstream resolution and the Lua SNI-to-DNS check."
+}
+
 variable "git_sha" {
   type        = string
   default     = "dev"
@@ -37,7 +43,7 @@ variable "packer_vpc_id" {
 variable "packer_subnet_id" {
   type        = string
   default     = ""
-  description = "Subnet to launch the build instance in. Must be in packer_vpc_id and have a route to the internet (IGW or NAT) so packer can SSH in and so dnf can fetch packages."
+  description = "Subnet to launch the build instance in. Must be in packer_vpc_id and have a route to the internet (IGW or NAT) so packer can SSH in and fetch build dependencies."
 }
 
 data "amazon-ami" "al2023" {
@@ -74,32 +80,15 @@ build {
   sources = ["source.amazon-ebs.nginx_proxy"]
 
   provisioner "file" {
-    source      = "${path.root}/files/nginx.conf"
-    destination = "/tmp/nginx.conf"
-  }
-
-  provisioner "file" {
-    source      = "${path.root}/files/refresh-sni-allowlist.sh"
-    destination = "/tmp/refresh-sni-allowlist.sh"
-  }
-
-  provisioner "file" {
-    source      = "${path.root}/files/refresh-sni-allowlist.service"
-    destination = "/tmp/refresh-sni-allowlist.service"
-  }
-
-  provisioner "file" {
-    source      = "${path.root}/files/refresh-sni-allowlist.timer"
-    destination = "/tmp/refresh-sni-allowlist.timer"
-  }
-
-  provisioner "file" {
-    source      = "${path.root}/files/cloudwatch-agent.json"
-    destination = "/tmp/cloudwatch-agent.json"
+    source      = "${path.root}/assets"
+    destination = "/tmp/"
   }
 
   provisioner "shell" {
     script          = "${path.root}/provision.sh"
     execute_command = "sudo -E bash '{{ .Path }}'"
+    environment_vars = [
+      "DNS_RESOLVER=${var.dns_resolver}",
+    ]
   }
 }
