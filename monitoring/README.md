@@ -23,7 +23,7 @@ the `benchmark/` directory).
 2. **Three metric filters** (`terraform/observability.tf`) turn lines
    into time-series under namespace `AwsFirewallProxy/Nginx`:
    `RequestsAllowed`, `RequestsDenied`, `Failures`.
-3. **One CloudWatch dashboard** (`${env}-proxy-proxy`) renders the three
+3. **One CloudWatch dashboard** (`${env}-proxy-dashboard`) renders the three
    widgets. URL is exposed as the `proxy_dashboard_url` terraform output.
 
 ## Verify

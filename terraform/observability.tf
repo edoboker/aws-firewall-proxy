@@ -81,7 +81,7 @@ resource "aws_cloudwatch_log_metric_filter" "failures" {
 # ── Dashboard ────────────────────────────────────────────────────────────────
 
 resource "aws_cloudwatch_dashboard" "proxy" {
-  dashboard_name = "${local.name}-proxy"
+  dashboard_name = "${local.name}-dashboard"
 
   dashboard_body = jsonencode({
     widgets = [
