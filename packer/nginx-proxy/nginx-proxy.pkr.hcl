@@ -14,7 +14,7 @@ variable "aws_region" {
 
 variable "instance_type" {
   type    = string
-  default = "t3.small"
+  default = "c6i.large"
 }
 
 variable "ami_name_prefix" {

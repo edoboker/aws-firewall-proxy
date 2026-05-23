@@ -4,6 +4,8 @@ TERRAFORM_WIN_PATH := C:\Windows\Sysnative\terraform.exe
 
 AWS_REGION ?= eu-north-1
 DNS_RESOLVER ?= 169.254.169.253
+PACKER_PROXY_INSTANCE_TYPE ?= c6i.large
+PACKER_WORKLOAD_INSTANCE_TYPE ?= t3.small
 
 PACKER_BUILD_INFRA_DIR := packer/build-infra
 PACKER_PROXY_DIR := packer/nginx-proxy
@@ -39,6 +41,8 @@ help:
 	@echo Useful variables:
 	@echo   AWS_REGION=$(AWS_REGION)
 	@echo   DNS_RESOLVER=$(DNS_RESOLVER)
+	@echo   PACKER_PROXY_INSTANCE_TYPE=$(PACKER_PROXY_INSTANCE_TYPE)
+	@echo   PACKER_WORKLOAD_INSTANCE_TYPE=$(PACKER_WORKLOAD_INSTANCE_TYPE)
 	@echo   BUILD_INFRA_APPLY_ARGS=-auto-approve
 	@echo   TERRAFORM_APPLY_ARGS=-auto-approve
 	@echo   PACKER_PROXY_BUILD_ARGS=-force
@@ -62,10 +66,10 @@ packer-validate-workload:
 	@"$(POWERSHELL)" -NoProfile -ExecutionPolicy Bypass -Command "& '$(PACKER_WIN_PATH)' validate '$(PACKER_WORKLOAD_DIR)'"
 
 packer-build-proxy:
-	@"$(POWERSHELL)" -NoProfile -ExecutionPolicy Bypass -Command "$$env:AWS_REGION = '$(AWS_REGION)'; $$env:TF_VAR_aws_region = '$(AWS_REGION)'; & '$(PACKER_WIN_PATH)' init '$(PACKER_PROXY_DIR)'; $$repoRoot = (Get-Location).Path.Replace('\', '/'); $$gitSha = (& git -c ('safe.directory=' + $$repoRoot) rev-parse --short HEAD).Trim(); $$packerVpcId = (& '$(TERRAFORM_WIN_PATH)' -chdir='$(PACKER_BUILD_INFRA_DIR)' output -raw vpc_id).Trim(); $$packerSubnetId = (& '$(TERRAFORM_WIN_PATH)' -chdir='$(PACKER_BUILD_INFRA_DIR)' output -raw subnet_id).Trim(); & '$(PACKER_WIN_PATH)' build -var ('aws_region=$(AWS_REGION)') -var ('git_sha=' + $$gitSha) -var ('dns_resolver=$(DNS_RESOLVER)') -var ('packer_vpc_id=' + $$packerVpcId) -var ('packer_subnet_id=' + $$packerSubnetId) $(PACKER_PROXY_BUILD_ARGS) '$(PACKER_PROXY_DIR)'"
+	@"$(POWERSHELL)" -NoProfile -ExecutionPolicy Bypass -Command "$$env:AWS_REGION = '$(AWS_REGION)'; $$env:TF_VAR_aws_region = '$(AWS_REGION)'; & '$(PACKER_WIN_PATH)' init '$(PACKER_PROXY_DIR)'; $$repoRoot = (Get-Location).Path.Replace('\', '/'); $$gitSha = (& git -c ('safe.directory=' + $$repoRoot) rev-parse --short HEAD).Trim(); $$packerVpcId = (& '$(TERRAFORM_WIN_PATH)' -chdir='$(PACKER_BUILD_INFRA_DIR)' output -raw vpc_id).Trim(); $$packerSubnetId = (& '$(TERRAFORM_WIN_PATH)' -chdir='$(PACKER_BUILD_INFRA_DIR)' output -raw subnet_id).Trim(); & '$(PACKER_WIN_PATH)' build -var ('aws_region=$(AWS_REGION)') -var ('instance_type=$(PACKER_PROXY_INSTANCE_TYPE)') -var ('git_sha=' + $$gitSha) -var ('dns_resolver=$(DNS_RESOLVER)') -var ('packer_vpc_id=' + $$packerVpcId) -var ('packer_subnet_id=' + $$packerSubnetId) $(PACKER_PROXY_BUILD_ARGS) '$(PACKER_PROXY_DIR)'"
 
 packer-build-workload:
-	@"$(POWERSHELL)" -NoProfile -ExecutionPolicy Bypass -Command "$$env:AWS_REGION = '$(AWS_REGION)'; $$env:TF_VAR_aws_region = '$(AWS_REGION)'; & '$(PACKER_WIN_PATH)' init '$(PACKER_WORKLOAD_DIR)'; $$repoRoot = (Get-Location).Path.Replace('\', '/'); $$gitSha = (& git -c ('safe.directory=' + $$repoRoot) rev-parse --short HEAD).Trim(); $$packerVpcId = (& '$(TERRAFORM_WIN_PATH)' -chdir='$(PACKER_BUILD_INFRA_DIR)' output -raw vpc_id).Trim(); $$packerSubnetId = (& '$(TERRAFORM_WIN_PATH)' -chdir='$(PACKER_BUILD_INFRA_DIR)' output -raw subnet_id).Trim(); & '$(PACKER_WIN_PATH)' build -var ('aws_region=$(AWS_REGION)') -var ('git_sha=' + $$gitSha) -var ('packer_vpc_id=' + $$packerVpcId) -var ('packer_subnet_id=' + $$packerSubnetId) $(PACKER_WORKLOAD_BUILD_ARGS) '$(PACKER_WORKLOAD_DIR)'"
+	@"$(POWERSHELL)" -NoProfile -ExecutionPolicy Bypass -Command "$$env:AWS_REGION = '$(AWS_REGION)'; $$env:TF_VAR_aws_region = '$(AWS_REGION)'; & '$(PACKER_WIN_PATH)' init '$(PACKER_WORKLOAD_DIR)'; $$repoRoot = (Get-Location).Path.Replace('\', '/'); $$gitSha = (& git -c ('safe.directory=' + $$repoRoot) rev-parse --short HEAD).Trim(); $$packerVpcId = (& '$(TERRAFORM_WIN_PATH)' -chdir='$(PACKER_BUILD_INFRA_DIR)' output -raw vpc_id).Trim(); $$packerSubnetId = (& '$(TERRAFORM_WIN_PATH)' -chdir='$(PACKER_BUILD_INFRA_DIR)' output -raw subnet_id).Trim(); & '$(PACKER_WIN_PATH)' build -var ('aws_region=$(AWS_REGION)') -var ('instance_type=$(PACKER_WORKLOAD_INSTANCE_TYPE)') -var ('git_sha=' + $$gitSha) -var ('packer_vpc_id=' + $$packerVpcId) -var ('packer_subnet_id=' + $$packerSubnetId) $(PACKER_WORKLOAD_BUILD_ARGS) '$(PACKER_WORKLOAD_DIR)'"
 
 packer-build-all: packer-build-proxy packer-build-workload
 

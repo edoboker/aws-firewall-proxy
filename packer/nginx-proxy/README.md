@@ -31,7 +31,7 @@ The build also bakes one shared DNS resolver value used by:
 ## Prerequisites
 
 - Packer >= 1.10
-- AWS credentials with permission to launch a `t3.small` in `eu-north-1`, create AMIs, and tag them
+- AWS credentials with permission to launch a `c6i.large` in `eu-north-1`, create AMIs, and tag them
 
 ## Build
 
@@ -81,6 +81,18 @@ packer build -var "git_sha=%GIT_SHA%" -var "dns_resolver=169.254.169.253" -var "
 If you have a default VPC in the account and prefer to use it, omit `packer_vpc_id` and `packer_subnet_id`.
 
 The resulting AMI is tagged `Name=aws-firewall-proxy-nginx`. Terraform finds it via `data "aws_ami" "nginx_proxy"` and always picks the most recent matching self-owned image.
+
+## Build speed note
+
+The proxy AMI build compiles OpenResty from source, so it is much more CPU-sensitive than the workload AMI build. For that reason, the proxy packer template now defaults to `instance_type = "c6i.large"` instead of a small burstable instance.
+
+If you want to trade cost for speed, override it at build time, for example:
+
+```bash
+packer build -var "instance_type=c6i.xlarge" .
+```
+
+The workload AMI does not have the same compile-heavy path, so it can stay on a smaller builder by default.
 
 ## DNS configuration
 
