@@ -122,27 +122,10 @@ resource "aws_cloudwatch_dashboard" "proxy" {
         }
       },
       {
-        type   = "metric"
+        type   = "log"
         x      = 0
         y      = 6
-        width  = 12
-        height = 6
-        properties = {
-          title  = "ANF alert volume (detected attacks)"
-          region = var.aws_region
-          view   = "timeSeries"
-          period = 60
-          stat   = "Sum"
-          metrics = [
-            ["AWS/Logs", "IncomingLogEvents", "LogGroupName", aws_cloudwatch_log_group.anf_alert.name],
-          ]
-        }
-      },
-      {
-        type   = "log"
-        x      = 12
-        y      = 6
-        width  = 12
+        width  = 24
         height = 6
         properties = {
           title  = "Top 10 SNIs (last 1h)"

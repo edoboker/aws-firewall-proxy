@@ -10,7 +10,7 @@ the `benchmark/` directory).
 | §7 KPI | Where to see it |
 |---|---|
 | Failures | Dashboard widget *nginx failures/min* (from nginx `error.log`) |
-| Detected attacks | Dashboard widget *ANF alert volume* (existing ANF alert log group) + *Proxy requests/min* `denied` series (SNI-spoof attempts that pass ANF but fail at nginx) |
+| Detected attacks | *Proxy requests/min* `denied` series — SNI-spoof / not-in-allowlist attempts the nginx gate blocks |
 | Repeating FQDNs / SNIs | Dashboard widget *Top 10 SNIs* (Logs Insights query) |
 | Added latency | Already covered by `benchmark/run.py` — not duplicated here |
 | Cache hits | Cache not implemented yet — wired in once the §3 cache sub-task lands |
@@ -23,7 +23,7 @@ the `benchmark/` directory).
 2. **Three metric filters** (`terraform/observability.tf`) turn lines
    into time-series under namespace `AwsFirewallProxy/Nginx`:
    `RequestsAllowed`, `RequestsDenied`, `Failures`.
-3. **One CloudWatch dashboard** (`${env}-proxy-proxy`) renders all four
+3. **One CloudWatch dashboard** (`${env}-proxy-proxy`) renders the three
    widgets. URL is exposed as the `proxy_dashboard_url` terraform output.
 
 ## Verify
