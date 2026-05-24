@@ -10,9 +10,8 @@ def outputs() -> dict:
 
 @pytest.fixture(scope="session")
 def aws_region(outputs) -> str:
-    # Region is not currently exposed as a TF output; default to the variable
-    # default. If you override aws_region in terraform.tfvars, set TF_VAR_aws_region
-    # or add an `aws_region` output and read it here.
+    # Prefer the deployed stack's region from Terraform output so the tests do
+    # not accidentally target a different region from the one holding the EC2s.
     import os
 
-    return os.environ.get("AWS_REGION", "eu-north-1")
+    return outputs.get("aws_region") or os.environ.get("AWS_REGION", "eu-north-1")
