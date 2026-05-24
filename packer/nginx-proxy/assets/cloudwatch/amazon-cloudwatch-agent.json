@@ -1,6 +1,43 @@
 {
   "agent": {
+    "metrics_collection_interval": __METRICS_PUBLISH_INTERVAL_SECONDS__,
     "run_as_user": "root"
+  },
+  "metrics": {
+    "namespace": "AwsFirewallProxy/Nginx",
+    "append_dimensions": {
+      "InstanceId": "${aws:InstanceId}",
+      "AutoScalingGroupName": "${aws:AutoScalingGroupName}"
+    },
+    "force_flush_interval": __METRICS_PUBLISH_INTERVAL_SECONDS__,
+    "metrics_collected": {
+      "statsd": {
+        "service_address": "127.0.0.1:8125",
+        "metrics_collection_interval": 10,
+        "metrics_aggregation_interval": __METRICS_PUBLISH_INTERVAL_SECONDS__
+      },
+      "cpu": {
+        "measurement": [
+          {
+            "name": "usage_active",
+            "rename": "CPUUtilization",
+            "unit": "Percent"
+          }
+        ],
+        "totalcpu": true,
+        "metrics_collection_interval": __METRICS_PUBLISH_INTERVAL_SECONDS__
+      },
+      "mem": {
+        "measurement": [
+          {
+            "name": "used_percent",
+            "rename": "MemoryUtilization",
+            "unit": "Percent"
+          }
+        ],
+        "metrics_collection_interval": __METRICS_PUBLISH_INTERVAL_SECONDS__
+      }
+    }
   },
   "logs": {
     "logs_collected": {

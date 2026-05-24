@@ -4,6 +4,12 @@ locals {
     [for resolver in var.proxy_public_dns_resolvers : resolver if resolver != "169.254.169.253"]
   )
 
+  # MVP choice: keep the AppConfig document focused on traffic policy
+  # (`allowed_snis`, DNS behavior, enforcement mode). The metrics publish
+  # interval stays Terraform-owned for now because changing it would also need
+  # coordinated CloudWatch agent re-render/restart behavior and dashboard/test
+  # timing updates. A future "hot-reload everything via AppConfig" design is
+  # valid, but we are intentionally not taking that on in this pass.
   proxy_runtime_policy = {
     allowed_snis = var.nginx_allowed_snis
     dns = {

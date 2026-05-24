@@ -55,7 +55,12 @@ def test_non_allowlisted_sni_is_denied(
     )
 
     assert wait_for_metric_sum(
-        METRIC_NAMESPACE, "RequestsBlocked", region=aws_region, start=start
+        METRIC_NAMESPACE,
+        "RequestsBlocked",
+        region=aws_region,
+        start=start,
+        timeout_seconds=180,
+        poll_interval=10.0,
     ), "RequestsBlocked metric did not increment"
 
 

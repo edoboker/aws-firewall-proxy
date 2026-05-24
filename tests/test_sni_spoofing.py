@@ -52,7 +52,12 @@ def test_sni_spoofing_detected(
     assert line is not None, f"no mismatch line in {SNI_SPOOFING_GROUP}"
 
     assert wait_for_metric_sum(
-        METRIC_NAMESPACE, "SpoofingDetected", region=aws_region, start=start
+        METRIC_NAMESPACE,
+        "SpoofingDetected",
+        region=aws_region,
+        start=start,
+        timeout_seconds=180,
+        poll_interval=10.0,
     ), "SpoofingDetected metric did not increment"
 
     # The spoof signal must stay out of the error log (it must not be counted as

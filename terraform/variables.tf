@@ -65,7 +65,7 @@ variable "allowed_fqdns" {
 }
 
 variable "nginx_allowed_snis" {
-  description = "SNIs allowed by the on-host nginx/OpenResty guard. Terraform publishes them into the AppConfig runtime policy and also keeps the legacy SSM parameter during the compatibility phase."
+  description = "SNIs allowed by the on-host nginx/OpenResty guard. Terraform publishes them into the AppConfig runtime policy."
   type        = list(string)
   default     = ["google.com", "amazonaws.com", "cdn.amazonlinux.com"]
 }
@@ -95,5 +95,16 @@ variable "proxy_enforcement_mode" {
   validation {
     condition     = contains(["strict", "audit"], var.proxy_enforcement_mode)
     error_message = "Proxy enforcement mode must be either strict or audit."
+  }
+}
+
+variable "proxy_metrics_publish_interval_seconds" {
+  description = "How often the proxy flushes aggregated metrics to the local CloudWatch agent StatsD listener."
+  type        = number
+  default     = 20
+
+  validation {
+    condition     = var.proxy_metrics_publish_interval_seconds >= 10 && var.proxy_metrics_publish_interval_seconds <= 900 && floor(var.proxy_metrics_publish_interval_seconds) == var.proxy_metrics_publish_interval_seconds
+    error_message = "Proxy metrics publish interval must be an integer between 10 and 900 seconds."
   }
 }

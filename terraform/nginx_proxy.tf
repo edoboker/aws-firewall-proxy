@@ -73,11 +73,17 @@ resource "aws_instance" "proxy" {
 
   # AMI bakes in OpenResty, the original-dst module, Lua policy, the AppConfig
   # Agent, and the runtime policy sync service.
-  # User_data injects the env-specific AppConfig coordinates plus the temporary
-  # SSM compatibility coordinates, then starts the agent and sync before nginx.
+  # User_data injects the env-specific AppConfig coordinates plus local runtime
+  # env vars, then starts the agent and sync before nginx. We intentionally
+  # keep the metrics publish interval out of AppConfig in this MVP so telemetry
+  # cadence changes do not also imply hot-reloading the CloudWatch agent path.
   user_data_base64 = base64encode(<<-EOF
     #!/bin/bash
     set -e
+    cat > /etc/sysconfig/aws-firewall-proxy-runtime <<CONF
+    PROXY_DEBUG=0
+    METRICS_PUBLISH_INTERVAL_SECONDS=${var.proxy_metrics_publish_interval_seconds}
+    CONF
     cat > /etc/sysconfig/aws-appconfig-agent <<CONF
     SERVICE_REGION=${var.aws_region}
     PREFETCH_LIST=${aws_appconfig_application.proxy.name}:${aws_appconfig_environment.proxy.name}:${aws_appconfig_configuration_profile.proxy_runtime_policy.name}
@@ -89,11 +95,9 @@ resource "aws_instance" "proxy" {
     APPCONFIG_AGENT_HOST=localhost
     APPCONFIG_AGENT_PORT=2772
     CONF
-    cat > /etc/sysconfig/nginx-sni-allowlist <<CONF
-    SSM_PARAMETER_NAME=${aws_ssm_parameter.nginx_sni_allowlist.name}
-    AWS_REGION=${var.aws_region}
-    CONF
+    systemctl restart render-cloudwatch-agent-config.service
     systemctl start aws-appconfig-agent
+    systemctl restart amazon-cloudwatch-agent
     systemctl start refresh-proxy-runtime-policy.service
     systemctl start nginx
   EOF

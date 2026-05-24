@@ -28,6 +28,16 @@ output "aws_region" {
   value       = var.aws_region
 }
 
+output "proxy_metrics_publish_interval_seconds" {
+  description = "Metrics publish interval for the on-host proxy and CloudWatch agent"
+  value       = var.proxy_metrics_publish_interval_seconds
+}
+
+output "proxy_metric_namespace" {
+  description = "CloudWatch namespace for proxy metrics"
+  value       = "AwsFirewallProxy/Nginx"
+}
+
 output "proxy_enforcement_mode" {
   description = "Proxy enforcement mode (strict|audit) - consumed by the test harness to decide whether a denied connection should also fail client-side"
   value       = var.proxy_enforcement_mode

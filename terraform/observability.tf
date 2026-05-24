@@ -1,12 +1,8 @@
-# ── Observability (§7) ────────────────────────────────────────────────────────
+# Observability (§7)
 #
-# Deliberately minimal CloudWatch footprint. The proxy emits two *sparse* event
-# logs (SNI-spoofing and policy-denied) plus its error log; per-connection access
-# logging is disabled by default (see README "Debugging"). A small set of metric
-# filters turns those sparse logs into time-series, surfaced by one dashboard.
-# Per-request latency / throughput KPIs are out of scope here: added latency is
-# covered by the §3 benchmark, and request-rate metrics will later be published
-# directly from nginx (stub_status) rather than via per-connection log shipping.
+# Keep the CloudWatch footprint intentionally small: sparse event logs for
+# meaningful security signals, plus direct proxy metrics published through the
+# local CloudWatch agent StatsD listener every N seconds.
 
 locals {
   log_group_access        = "/aws/firewall-proxy/nginx/access"
@@ -16,18 +12,11 @@ locals {
   metric_namespace        = "AwsFirewallProxy/Nginx"
 }
 
-# Pre-create the log groups so retention is under our control rather than
-# whatever the CW agent decides on first write (default: never expire).
-# Group names must match packer/nginx-proxy/assets/cloudwatch/amazon-cloudwatch-agent.json.
-
-# SNI-spoofing: requested SNI is allowlisted but the connection's original
-# destination IP is not among the SNI's resolved A records. The attack signal.
 resource "aws_cloudwatch_log_group" "proxy_sni_spoofing" {
   name              = local.log_group_sni_spoofing
   retention_in_days = 3
 }
 
-# Policy-denied: SNI not in the allowlist, or no SNI present. Normal enforcement.
 resource "aws_cloudwatch_log_group" "proxy_policy_denied" {
   name              = local.log_group_policy_denied
   retention_in_days = 3
@@ -38,27 +27,18 @@ resource "aws_cloudwatch_log_group" "proxy_error" {
   retention_in_days = 3
 }
 
-# Per-connection access log. Disabled at the nginx level by default; the group is
-# pre-provisioned so enabling debug logging is a one-line nginx toggle, not an
-# infra change (see README "Debugging"). Stays empty until then.
 resource "aws_cloudwatch_log_group" "proxy_access" {
   name              = local.log_group_access
   retention_in_days = 3
 }
 
-# CloudWatchAgentServerPolicy covers CreateLogStream + PutLogEvents on
-# any log group. The proxy role already exists in nginx_allowlist.tf.
 resource "aws_iam_role_policy_attachment" "proxy_cw_agent" {
   role       = aws_iam_role.proxy.name
   policy_arn = "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy"
 }
 
-# ── Metric filters ────────────────────────────────────────────────────────────
-# The spoofing and policy-denied groups each hold only their own event type, so
-# an empty pattern (match every line) is the event count. Failures key off the
-# literal `[error]` tag nginx writes for ngx.ERR (Lua internal failures) and
-# upstream connect errors.
-
+# Keep the sparse log-derived metrics for backwards compatibility and ad-hoc
+# correlation, but the dashboard below prefers the direct proxy metrics.
 resource "aws_cloudwatch_log_metric_filter" "spoofing_detected" {
   name           = "${local.name}-spoofing-detected"
   log_group_name = aws_cloudwatch_log_group.proxy_sni_spoofing.name
@@ -98,8 +78,6 @@ resource "aws_cloudwatch_log_metric_filter" "failures" {
   }
 }
 
-# ── Dashboard ────────────────────────────────────────────────────────────────
-
 resource "aws_cloudwatch_dashboard" "proxy" {
   dashboard_name = "${local.name}-dashboard"
 
@@ -112,13 +90,13 @@ resource "aws_cloudwatch_dashboard" "proxy" {
         width  = 8
         height = 6
         properties = {
-          title  = "SNI spoofing attacks detected/min"
+          title  = "Requests/sec"
           region = var.aws_region
           view   = "timeSeries"
-          period = 60
-          stat   = "Sum"
+          period = var.proxy_metrics_publish_interval_seconds
           metrics = [
-            [local.metric_namespace, "SpoofingDetected"],
+            [local.metric_namespace, "Requests", "InstanceId", aws_instance.proxy.id, { id = "m1", stat = "Sum", visible = false }],
+            [{ expression = "m1/${var.proxy_metrics_publish_interval_seconds}", id = "e1", label = "Requests/sec" }],
           ]
         }
       },
@@ -129,13 +107,14 @@ resource "aws_cloudwatch_dashboard" "proxy" {
         width  = 8
         height = 6
         properties = {
-          title  = "Policy-denied requests/min"
+          title  = "Connections"
           region = var.aws_region
           view   = "timeSeries"
-          period = 60
-          stat   = "Sum"
+          period = var.proxy_metrics_publish_interval_seconds
           metrics = [
-            [local.metric_namespace, "RequestsBlocked"],
+            [local.metric_namespace, "ActiveConnections", "InstanceId", aws_instance.proxy.id, { label = "Active", stat = "Average" }],
+            [".", "AcceptedConnections", ".", ".", { label = "Accepted", stat = "Sum" }],
+            [".", "BlockedConnections", ".", ".", { label = "Blocked", stat = "Sum" }],
           ]
         }
       },
@@ -146,20 +125,109 @@ resource "aws_cloudwatch_dashboard" "proxy" {
         width  = 8
         height = 6
         properties = {
-          title  = "nginx failures/min"
+          title  = "Security and Failure Signals"
           region = var.aws_region
           view   = "timeSeries"
-          period = 60
-          stat   = "Sum"
+          period = var.proxy_metrics_publish_interval_seconds
           metrics = [
-            [local.metric_namespace, "Failures"],
+            [local.metric_namespace, "SniMismatchCount", "InstanceId", aws_instance.proxy.id, { label = "SNI mismatch", stat = "Sum" }],
+            [".", "DnsResolutionFailureCount", ".", ".", { label = "DNS failures", stat = "Sum" }],
+            [".", "UpstreamConnectFailureCount", ".", ".", { label = "Upstream connect failures", stat = "Sum" }],
+            [".", "InternalFailureCount", ".", ".", { label = "Internal failures", stat = "Sum" }],
+          ]
+        }
+      },
+      {
+        type   = "metric"
+        x      = 0
+        y      = 6
+        width  = 12
+        height = 6
+        properties = {
+          title  = "Proxy Decision Latency"
+          region = var.aws_region
+          view   = "timeSeries"
+          period = var.proxy_metrics_publish_interval_seconds
+          metrics = [
+            [local.metric_namespace, "P50ProxyDecisionLatencyMs", "InstanceId", aws_instance.proxy.id, { label = "p50", stat = "Average" }],
+            [".", "P95ProxyDecisionLatencyMs", ".", ".", { label = "p95", stat = "Average" }],
+            [".", "P99ProxyDecisionLatencyMs", ".", ".", { label = "p99", stat = "Average" }],
+          ]
+          yAxis = {
+            left = {
+              label = "Milliseconds"
+            }
+          }
+        }
+      },
+      {
+        type   = "metric"
+        x      = 12
+        y      = 6
+        width  = 12
+        height = 6
+        properties = {
+          title  = "Upstream Connect Latency"
+          region = var.aws_region
+          view   = "timeSeries"
+          period = var.proxy_metrics_publish_interval_seconds
+          metrics = [
+            [local.metric_namespace, "P50UpstreamConnectLatencyMs", "InstanceId", aws_instance.proxy.id, { label = "p50", stat = "Average" }],
+            [".", "P95UpstreamConnectLatencyMs", ".", ".", { label = "p95", stat = "Average" }],
+            [".", "P99UpstreamConnectLatencyMs", ".", ".", { label = "p99", stat = "Average" }],
+          ]
+          yAxis = {
+            left = {
+              label = "Milliseconds"
+            }
+          }
+        }
+      },
+      {
+        type   = "metric"
+        x      = 0
+        y      = 12
+        width  = 12
+        height = 6
+        properties = {
+          title  = "Host Saturation"
+          region = var.aws_region
+          view   = "timeSeries"
+          period = var.proxy_metrics_publish_interval_seconds
+          metrics = [
+            [local.metric_namespace, "CPUUtilization", "InstanceId", aws_instance.proxy.id, { label = "CPU", stat = "Average" }],
+            [".", "MemoryUtilization", ".", ".", { label = "Memory", stat = "Average" }],
+          ]
+          yAxis = {
+            left = {
+              label = "Percent"
+              max   = 100
+              min   = 0
+            }
+          }
+        }
+      },
+      {
+        type   = "metric"
+        x      = 12
+        y      = 12
+        width  = 12
+        height = 6
+        properties = {
+          title  = "Network Throughput"
+          region = var.aws_region
+          view   = "timeSeries"
+          period = var.proxy_metrics_publish_interval_seconds
+          metrics = [
+            ["AWS/EC2", "NetworkIn", "InstanceId", aws_instance.proxy.id, { label = "NetworkIn", stat = "Sum" }],
+            [".", "NetworkOut", ".", ".", { label = "NetworkOut", stat = "Sum" }],
           ]
         }
       },
       {
         type   = "log"
         x      = 0
-        y      = 6
+        y      = 18
         width  = 24
         height = 6
         properties = {
