@@ -97,7 +97,7 @@ build {
 
   provisioner "shell" {
     script          = "${path.root}/provision.sh"
-    execute_command = "sudo -E bash '{{ .Path }}'"
+    execute_command = "{{ .Vars }} sudo -E bash '{{ .Path }}'"
     environment_vars = [
       "DNS_RESOLVERS=${var.dns_resolvers}",
       "DNS_QUERIES_PER_SNI=${var.dns_queries_per_sni}",
