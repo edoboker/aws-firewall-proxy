@@ -103,10 +103,6 @@ local function build_nameserver_list(resolvers)
         end
     end
 
-    if #nameservers == 0 then
-        add("169.254.169.253")
-    end
-
     return nameservers
 end
 
@@ -114,22 +110,18 @@ local function set_decision(decision)
     set_var("proxy_decision", decision)
 end
 
-local function fail_internal(event, fields, enforce)
+local function fail_internal(event, fields)
     set_decision(event)
     log_event(ngx.ERR, event, fields)
-    if enforce ~= false then
-        return ngx.exit(ngx.ERROR)
-    end
+    return ngx.exit(ngx.ERROR)
 end
 
-local function fail_quiet(decision, enforce)
+local function fail_quiet(decision)
     set_decision(decision)
     if DEBUG then
         log_event(ngx.NOTICE, decision, nil)
     end
-    if enforce ~= false then
-        return ngx.exit(ngx.ERROR)
-    end
+    return ngx.exit(ngx.ERROR)
 end
 
 local function u16(data, pos)
@@ -342,16 +334,31 @@ local function load_runtime_policy()
         return nil, "runtime_policy_missing_dns"
     end
 
+    if type(dns.resolvers) ~= "table" then
+        return nil, "runtime_policy_missing_resolvers"
+    end
+
+    for idx, nameserver in ipairs(dns.resolvers) do
+        if type(nameserver) ~= "string" or nameserver == "" then
+            return nil, "runtime_policy_invalid_resolver:" .. tostring(idx)
+        end
+    end
+
     local nameservers = build_nameserver_list(dns.resolvers)
     if #nameservers == 0 then
         return nil, "runtime_policy_missing_resolvers"
     end
 
-    local dns_queries_per_sni = tonumber(dns.queries_per_sni or "1") or 1
-    if dns_queries_per_sni < 1 then
-        dns_queries_per_sni = 1
-    elseif dns_queries_per_sni > 16 then
-        dns_queries_per_sni = 16
+    local raw_dns_queries_per_sni = dns.queries_per_sni
+    local dns_queries_per_sni = tonumber(raw_dns_queries_per_sni)
+    if not dns_queries_per_sni then
+        return nil, "runtime_policy_invalid_queries_per_sni"
+    end
+    if dns_queries_per_sni % 1 ~= 0 then
+        return nil, "runtime_policy_non_integer_queries_per_sni"
+    end
+    if dns_queries_per_sni < 1 or dns_queries_per_sni > 16 then
+        return nil, "runtime_policy_out_of_range_queries_per_sni"
     end
 
     local enforcement = policy.enforcement
@@ -367,7 +374,6 @@ local function load_runtime_policy()
     return {
         dns_queries_per_sni = dns_queries_per_sni,
         dns_resolvers = table.concat(nameservers, ","),
-        enforcement_mode = mode,
         enforce = mode == "strict",
         nameservers = nameservers,
     }
@@ -467,7 +473,7 @@ local ok, runtime_err = xpcall(function()
         return fail_internal("runtime_policy_load_failed", {
             original_dst = original_dst,
             err = policy_err,
-        }, true)
+        })
     end
 
     if not original_dst or original_dst == "" then
@@ -475,7 +481,7 @@ local ok, runtime_err = xpcall(function()
             original_dst = original_dst,
             dns_resolver = runtime_policy.dns_resolvers,
             err = "iptables REDIRECT likely missing",
-        }, runtime_policy.enforce)
+        })
     end
 
     local dst_ip = original_dst:match("^([^:]+):")
@@ -483,7 +489,7 @@ local ok, runtime_err = xpcall(function()
         return fail_internal("bad_original_dst", {
             original_dst = original_dst,
             dns_resolver = runtime_policy.dns_resolvers,
-        }, runtime_policy.enforce)
+        })
     end
     set_var("dst_ip", dst_ip)
 
@@ -494,7 +500,7 @@ local ok, runtime_err = xpcall(function()
             dst_ip = dst_ip,
             dns_resolver = runtime_policy.dns_resolvers,
             err = peek_err,
-        }, runtime_policy.enforce)
+        })
     end
 
     local clienthello, parse_err = parse_client_hello(record)
@@ -505,7 +511,7 @@ local ok, runtime_err = xpcall(function()
                 dst_ip = dst_ip,
                 dns_resolver = runtime_policy.dns_resolvers,
             })
-            return fail_quiet("drop_no_sni", runtime_policy.enforce)
+            return fail_quiet("drop_no_sni")
         end
 
         return fail_internal("client_hello_parse_failed", {
@@ -513,7 +519,7 @@ local ok, runtime_err = xpcall(function()
             dst_ip = dst_ip,
             dns_resolver = runtime_policy.dns_resolvers,
             err = parse_err,
-        }, runtime_policy.enforce)
+        })
     end
 
     set_var("client_sni", clienthello.sni or "")
@@ -545,7 +551,7 @@ local ok, runtime_err = xpcall(function()
             original_dst = original_dst,
             dst_ip = dst_ip,
             dns_resolver = runtime_policy.dns_resolvers,
-        }, runtime_policy.enforce)
+        })
     end
 
     if sni_allowed ~= "1" then
@@ -558,7 +564,7 @@ local ok, runtime_err = xpcall(function()
             dns_resolver = runtime_policy.dns_resolvers,
             dns_queries_per_sni = runtime_policy.dns_queries_per_sni,
         })
-        return fail_quiet("deny_allowlist", runtime_policy.enforce)
+        return fail_quiet("deny_allowlist")
     end
 
     local resolved, resolved_str, dns_resolver_used, resolve_err = resolve_sni_addresses(clienthello.sni, runtime_policy)
@@ -570,7 +576,7 @@ local ok, runtime_err = xpcall(function()
             dns_resolver = dns_resolver_used or runtime_policy.dns_resolvers,
             dns_queries_per_sni = runtime_policy.dns_queries_per_sni,
             err = resolve_err,
-        }, runtime_policy.enforce)
+        })
     end
 
     set_var("resolved_ips", resolved_str)
