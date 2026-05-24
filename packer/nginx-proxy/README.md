@@ -8,7 +8,6 @@ This AMI now bakes the full transparent proxy runtime:
 - the custom `SO_ORIGINAL_DST` C stream module
 - the Lua preread guard that parses ClientHello, enforces the SNI allowlist, resolves DNS, and detects SNI spoofing
 - iptables-services
-- awscli v2
 - AWS AppConfig Agent
 - the `refresh-proxy-runtime-policy` systemd timer
 - the CloudWatch agent config for `/var/log/nginx/{access,error}.log`
@@ -105,7 +104,7 @@ The demo Terraform defaults publish:
 - `proxy_dns_queries_per_sni = 3`
 - `proxy_enforcement_mode = "strict"`
 
-The legacy SSM allowlist remains installed only as a compatibility fallback for first boot if AppConfig is temporarily unavailable.
+On first boot, nginx depends on a successful AppConfig policy render rather than a legacy fallback path.
 
 ## What is on the host at boot
 
@@ -145,5 +144,5 @@ volume stays a clean proxy-health signal.
 ## Notes
 
 - The current proxy path drops spoofed connections instead of silently correcting them.
-- AppConfig is the primary runtime policy source. The SSM allowlist remains only as a temporary compatibility fallback during migration.
+- AppConfig is the runtime policy source of truth.
 - DNS/original-dst matching is probabilistic for CDN-style domains. Multiple resolvers and repeated queries improve coverage, but they cannot guarantee that the proxy sees every IP a client may have received.
