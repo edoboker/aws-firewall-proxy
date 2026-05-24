@@ -105,6 +105,57 @@ The demo Terraform defaults publish:
 - `proxy_dns_queries_per_sni = 3`
 - `proxy_enforcement_mode = "strict"`
 
+## Metrics pipeline
+
+The proxy metrics path is a three-part chain:
+
+1. nginx/OpenResty triggers Lua hooks during worker startup and per-connection processing
+2. Lua aggregates counters and latency histograms in an nginx shared dictionary
+3. the CloudWatch agent receives the flushed StatsD packets on `127.0.0.1:8125` and publishes them to CloudWatch
+
+### Who calls `init_metrics.lua`?
+
+nginx itself does. The stream config declares:
+
+```nginx
+init_worker_by_lua_file /etc/nginx/lua/init_metrics.lua;
+```
+
+That directive runs during nginx worker initialization, so `init_metrics.lua` is invoked once for each worker process when nginx starts or reloads. The file is intentionally tiny: it just imports `proxy_metrics.lua` and calls `start_flush_timer()`. Only worker `0` actually schedules the repeating flush timer, which prevents duplicate publishers.
+
+### Per-connection trigger flow
+
+Each proxied TLS connection through the stream listener drives the metrics lifecycle:
+
+- `preread_by_lua_file /etc/nginx/lua/check_sni.lua`
+  starts the metrics session with `record_session_start()`, which increments `Requests` and `ActiveConnections`
+- the same preread hook records the terminal policy outcome:
+  - `record_allow()` for accepted sessions
+  - `record_block(...)` for allowlist denies, no-SNI drops, DNS failures, and internal errors
+  - `record_mismatch(...)` for SNI spoofing detections
+- `log_by_lua_file /etc/nginx/lua/log_metrics.lua`
+  runs at session end and calls `finalize_session()`, which decrements `ActiveConnections` and records upstream connect latency and upstream failure metrics for forwarded sessions
+
+### Aggregation and flush behavior
+
+`proxy_metrics.lua` stores metric state in the nginx shared dictionary:
+
+```nginx
+lua_shared_dict proxy_metrics 1m;
+```
+
+It groups counters and histogram buckets into rolling publish windows keyed by `METRICS_PUBLISH_INTERVAL_SECONDS` from `/etc/sysconfig/aws-firewall-proxy-runtime`. When a window closes, the flush timer converts the aggregated values into StatsD lines and sends them over UDP to `127.0.0.1:8125`.
+
+### CloudWatch agent handoff
+
+The proxy AMI does not have Lua call CloudWatch directly. Instead:
+
+- `render-cloudwatch-agent-config.sh` renders the final agent config from the runtime interval
+- `render-cloudwatch-agent-config.service` runs before `amazon-cloudwatch-agent.service`
+- the CloudWatch agent listens for local StatsD traffic, aggregates it on the same interval, and publishes metrics into the `AwsFirewallProxy/Nginx` namespace
+
+This separation keeps the hot request path inside nginx/Lua while delegating AWS API interaction and retry behavior to the CloudWatch agent.
+
 ## What is on the host at boot
 
 - `/etc/nginx/nginx.conf` - OpenResty stream config with the Lua preread guard and the original-dst module loaded
