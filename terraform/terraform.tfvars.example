@@ -21,16 +21,21 @@ allowed_fqdns = [
 ]
 
 # SNIs allowed by the on-host nginx gate (independent of the ANF allowlist above).
-# Pushed by Terraform into SSM Parameter Store; the proxy refreshes from SSM every 60s.
+# Terraform publishes these into the AppConfig runtime policy. During the
+# compatibility phase it also keeps the legacy SSM fallback parameter.
 nginx_allowed_snis = [
   "google.com",
   "amazonaws.com",
   "cdn.amazonlinux.com"
 ]
 
+# AppConfig-backed proxy DNS/enforcement runtime policy.
+proxy_dns_queries_per_sni = 3
+proxy_enforcement_mode    = "strict"
+
 # Public recursive DNS resolvers the demo Network Firewall policy lets the
-# proxy query directly. Route 53 Resolver (169.254.169.253) stays inside the
-# VPC resolver path and is configured at AMI build time.
+# proxy query directly. Route 53 Resolver (169.254.169.253) is automatically
+# added to the AppConfig runtime policy and stays inside the VPC resolver path.
 proxy_public_dns_resolvers = [
   "1.1.1.1",
   "8.8.8.8"

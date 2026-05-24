@@ -6,7 +6,7 @@
  * getsockopt(SO_ORIGINAL_DST). Only meaningful when traffic reaches
  * nginx via iptables REDIRECT/DNAT. Linux-only.
  *
- * Format: "AAA.BBB.CCC.DDD:PORT"  (IPv4 only for this spike)
+ * Format: "AAA.BBB.CCC.DDD:PORT"  (IPv4 only in this implementation)
  *
  * This module deliberately contains no policy logic. It only surfaces
  * the kernel-recorded original destination so that downstream Lua code
@@ -81,7 +81,7 @@ ngx_stream_original_dst_variable(ngx_stream_session_t *s,
     }
 
     if (ss.ss_family != AF_INET) {
-        /* IPv6 path (SOL_IPV6/IP6T_SO_ORIGINAL_DST) not handled in spike. */
+        /* IPv6 path (SOL_IPV6/IP6T_SO_ORIGINAL_DST) is not handled here. */
         v->not_found = 1;
         return NGX_OK;
     }

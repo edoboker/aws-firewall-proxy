@@ -27,6 +27,18 @@
             "retention_in_days": 3
           },
           {
+            "file_path": "/var/log/aws-firewall-proxy/runtime-sync.log",
+            "log_group_name": "/aws/firewall-proxy/runtime/policy-sync",
+            "log_stream_name": "{instance_id}",
+            "retention_in_days": 3
+          },
+          {
+            "file_path": "/var/log/aws/appconfig-agent.log",
+            "log_group_name": "/aws/firewall-proxy/runtime/appconfig-agent",
+            "log_stream_name": "{instance_id}",
+            "retention_in_days": 3
+          },
+          {
             "file_path": "/var/log/nginx/access.log",
             "log_group_name": "/aws/firewall-proxy/nginx/access",
             "log_stream_name": "{instance_id}",
