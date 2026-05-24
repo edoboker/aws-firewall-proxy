@@ -322,7 +322,7 @@ def main() -> int:
     ec2 = boto3.client("ec2", region_name=region)
 
     # Sanity-check hey is baked into the AMI. Don't try to install at runtime.
-    probe = ssm_exec(workload_id, "command -v hey", region=region, timeout_seconds=20)
+    probe = ssm_exec(workload_id, "command -v hey", region=region, timeout_seconds=30)
     if probe.exit_code != 0:
         print(
             "ERROR: `hey` not found on workload. Rebuild the AMI: "
