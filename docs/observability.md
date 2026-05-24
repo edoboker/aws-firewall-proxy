@@ -5,7 +5,7 @@ section 7 KPIs in `docs/production-grade-plan.md` end to end, with a
 deliberately small footprint. The proxy ships sparse event logs for meaningful
 security events and publishes aggregated metrics directly through the local
 CloudWatch agent StatsD listener every
-`proxy_metrics_publish_interval_seconds` seconds (default `60`).
+`proxy_metrics_publish_interval_seconds` seconds (default `20`).
 
 ## What's wired
 

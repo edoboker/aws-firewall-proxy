@@ -4,7 +4,7 @@ set -euo pipefail
 CONFIG_FILE=/etc/sysconfig/aws-firewall-proxy-runtime
 TEMPLATE_FILE=/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json.template
 OUTPUT_FILE=/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
-DEFAULT_INTERVAL=60
+DEFAULT_INTERVAL=20
 
 if [[ -r "$CONFIG_FILE" ]]; then
     # shellcheck disable=SC1090

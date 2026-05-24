@@ -194,7 +194,7 @@ provisioned (see `docs/observability.md`).
 
 Operational dashboards no longer depend only on log-derived metrics. The proxy
 publishes aggregated metrics directly to the local CloudWatch agent every
-`proxy_metrics_publish_interval_seconds` seconds (default `60`), while the
+`proxy_metrics_publish_interval_seconds` seconds (default `20`), while the
 debug toggles below remain optional.
 
 **Per-connection access log.** In production this is millions of lines and

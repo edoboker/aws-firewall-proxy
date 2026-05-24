@@ -101,7 +101,7 @@ variable "proxy_enforcement_mode" {
 variable "proxy_metrics_publish_interval_seconds" {
   description = "How often the proxy flushes aggregated metrics to the local CloudWatch agent StatsD listener."
   type        = number
-  default     = 60
+  default     = 20
 
   validation {
     condition     = var.proxy_metrics_publish_interval_seconds >= 10 && var.proxy_metrics_publish_interval_seconds <= 900 && floor(var.proxy_metrics_publish_interval_seconds) == var.proxy_metrics_publish_interval_seconds

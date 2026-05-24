@@ -34,7 +34,7 @@ proxy_enforcement_mode    = "strict"
 
 # How often the proxy flushes aggregated metrics and the CloudWatch agent
 # publishes them onward to CloudWatch.
-proxy_metrics_publish_interval_seconds = 60
+proxy_metrics_publish_interval_seconds = 20
 
 # Public recursive DNS resolvers the demo Network Firewall policy lets the
 # proxy query directly. Route 53 Resolver (169.254.169.253) is automatically

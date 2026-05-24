@@ -146,7 +146,7 @@ install -m 0644 "${ASSET_ROOT}/cloudwatch/amazon-cloudwatch-agent.json" \
 # AppConfig and is rendered to disk by refresh-proxy-runtime-policy.sh.
 cat > /etc/sysconfig/aws-firewall-proxy-runtime << EOF
 PROXY_DEBUG=0
-METRICS_PUBLISH_INTERVAL_SECONDS=60
+METRICS_PUBLISH_INTERVAL_SECONDS=20
 EOF
 chmod 0644 /etc/sysconfig/aws-firewall-proxy-runtime
 

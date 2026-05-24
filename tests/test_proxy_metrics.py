@@ -94,7 +94,8 @@ def test_proxy_metrics_reach_cloudwatch(outputs, aws_region):
     )
     assert result.status == "Success", f"traffic generation failed: {result!r}"
 
-    timeout_seconds = period_seconds * 4 + 90
+    timeout_seconds = period_seconds * 6 + 120
+    poll_interval_seconds = max(5, min(10, period_seconds // 2))
     wait_for_metric_delta(
         region=aws_region,
         namespace=namespace,
@@ -105,6 +106,7 @@ def test_proxy_metrics_reach_cloudwatch(outputs, aws_region):
         baseline=baselines["Requests"],
         minimum_delta=total_count,
         timeout_seconds=timeout_seconds,
+        poll_interval_seconds=poll_interval_seconds,
     )
     wait_for_metric_delta(
         region=aws_region,
@@ -116,6 +118,7 @@ def test_proxy_metrics_reach_cloudwatch(outputs, aws_region):
         baseline=baselines["AcceptedConnections"],
         minimum_delta=allowed_count,
         timeout_seconds=timeout_seconds,
+        poll_interval_seconds=poll_interval_seconds,
     )
     wait_for_metric_delta(
         region=aws_region,
@@ -127,6 +130,7 @@ def test_proxy_metrics_reach_cloudwatch(outputs, aws_region):
         baseline=baselines["BlockedConnections"],
         minimum_delta=blocked_count,
         timeout_seconds=timeout_seconds,
+        poll_interval_seconds=poll_interval_seconds,
     )
     wait_for_metric_delta(
         region=aws_region,
@@ -138,4 +142,5 @@ def test_proxy_metrics_reach_cloudwatch(outputs, aws_region):
         baseline=baselines["SniMismatchCount"],
         minimum_delta=spoof_count,
         timeout_seconds=timeout_seconds,
+        poll_interval_seconds=poll_interval_seconds,
     )

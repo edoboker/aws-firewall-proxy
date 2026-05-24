@@ -133,7 +133,7 @@ def wait_for_metric_delta(
     baseline: float,
     minimum_delta: float,
     timeout_seconds: int,
-    poll_interval_seconds: int = 15,
+    poll_interval_seconds: int = 10,
 ) -> float:
     deadline = time.monotonic() + timeout_seconds
 
@@ -165,8 +165,8 @@ def wait_for_metric_sum(
     region: str,
     start,
     min_value: float = 1.0,
-    timeout_seconds: int = 90,
-    poll_interval: float = 15.0,
+    timeout_seconds: int = 150,
+    poll_interval: float = 10.0,
 ) -> bool:
     """Poll until the metric's Sum since start reaches min_value."""
     deadline = time.monotonic() + timeout_seconds

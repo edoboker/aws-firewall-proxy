@@ -3,7 +3,7 @@ local _M = {}
 local dict = ngx.shared.proxy_metrics
 local statsd_host = "127.0.0.1"
 local statsd_port = 8125
-local default_interval = 60
+local default_interval = 20
 
 local histogram_specs = {
     ProxyDecisionLatencyMs = {
