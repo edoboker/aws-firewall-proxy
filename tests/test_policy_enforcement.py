@@ -21,8 +21,12 @@ METRIC_NAMESPACE = "AwsFirewallProxy/Nginx"
 DENIED_FQDN = "example.org"  # deliberately not in the allowlist
 
 
-def _curl(outputs, aws_region, target: str):
-    cmd = f"curl -sk -o /dev/null --max-time 10 https://{target}"
+def _curl(outputs, aws_region, target: str, *, resolve_to: str | None = None):
+    # resolve_to pins the destination IP and skips DNS entirely (curl --resolve),
+    # which lets us send an SNI the DNS Firewall would otherwise NXDOMAIN before
+    # any connection reaches the proxy.
+    resolve = f"--resolve {target}:443:{resolve_to} " if resolve_to else ""
+    cmd = f"curl -sk -o /dev/null --max-time 10 {resolve}https://{target}"
     return ssm_exec(
         outputs["workload_instance_id"],
         cmd,
@@ -37,7 +41,11 @@ def test_non_allowlisted_sni_is_denied(
     start_ms = now_ms()
     start = datetime.now(timezone.utc)
 
-    result = _curl(outputs, aws_region, DENIED_FQDN)
+    # example.org is not in the DNS Firewall allowlist, so a plain request would
+    # fail at resolution and never reach the proxy. Pin the IP to bypass DNS and
+    # force the ClientHello (SNI=example.org) onto the proxy, where the on-host
+    # allowlist denies it. The IP is irrelevant - the guard denies before resolving.
+    result = _curl(outputs, aws_region, DENIED_FQDN, resolve_to="1.1.1.1")
 
     if proxy_enforcement_mode == "strict":
         assert result.exit_code != 0, (
