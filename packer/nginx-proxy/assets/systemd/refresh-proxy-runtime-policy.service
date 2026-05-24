@@ -1,0 +1,9 @@
+[Unit]
+Description=Refresh nginx runtime policy from AWS AppConfig Agent
+After=network-online.target aws-appconfig-agent.service
+Wants=network-online.target aws-appconfig-agent.service
+Before=nginx.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/refresh-proxy-runtime-policy.sh

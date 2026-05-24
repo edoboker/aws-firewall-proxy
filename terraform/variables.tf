@@ -65,7 +65,7 @@ variable "allowed_fqdns" {
 }
 
 variable "nginx_allowed_snis" {
-  description = "SNIs allowed by the on-host nginx gate. Pushed to SSM Parameter Store; the proxy refreshes every 60s."
+  description = "SNIs allowed by the on-host nginx/OpenResty guard. Terraform publishes them into the AppConfig runtime policy and also keeps the legacy SSM parameter during the compatibility phase."
   type        = list(string)
   default     = ["google.com", "amazonaws.com", "cdn.amazonlinux.com"]
 }
@@ -74,4 +74,26 @@ variable "proxy_public_dns_resolvers" {
   description = "Public DNS resolver IPs the demo firewall policy allows the proxy to query directly."
   type        = list(string)
   default     = ["1.1.1.1", "8.8.8.8"]
+}
+
+variable "proxy_dns_queries_per_sni" {
+  description = "How many A-record queries the proxy sends to each configured resolver for each SNI."
+  type        = number
+  default     = 3
+
+  validation {
+    condition     = var.proxy_dns_queries_per_sni >= 1 && var.proxy_dns_queries_per_sni <= 16
+    error_message = "Proxy DNS queries per SNI must be between 1 and 16."
+  }
+}
+
+variable "proxy_enforcement_mode" {
+  description = "Whether the on-host proxy enforces mismatches (`strict`) or only logs them (`audit`)."
+  type        = string
+  default     = "strict"
+
+  validation {
+    condition     = contains(["strict", "audit"], var.proxy_enforcement_mode)
+    error_message = "Proxy enforcement mode must be either strict or audit."
+  }
 }

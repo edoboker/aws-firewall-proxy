@@ -3,16 +3,13 @@
 #   * build and install OpenResty with stream preread support
 #   * compile and install the original-dst stream C module
 #   * install the Lua SNI/original-dst guard
-#   * bake in the SSM allowlist refresh timer and CloudWatch agent config
+#   * bake in the AppConfig-backed runtime policy sync and CloudWatch config
 set -euo pipefail
 
 ASSET_ROOT=/tmp/assets
 OPENRESTY_VERSION=1.27.1.1
 OPENRESTY_URL="https://openresty.org/download/openresty-${OPENRESTY_VERSION}.tar.gz"
 OPENRESTY_SRC="/usr/local/src/openresty-${OPENRESTY_VERSION}"
-DNS_RESOLVERS="${DNS_RESOLVERS:-${DNS_RESOLVER:-169.254.169.253}}"
-DNS_RESOLVERS_FOR_NGINX="${DNS_RESOLVERS//,/ }"
-DNS_QUERIES_PER_SNI="${DNS_QUERIES_PER_SNI:-1}"
 
 log_step() {
   echo "[proxy-ami] $1"
@@ -44,6 +41,7 @@ run_quiet "Installing build and runtime packages" /var/log/proxy-dnf-install.log
   openssl-devel \
   zlib-devel \
   curl-minimal \
+  jq \
   tar \
   findutils \
   diffutils \
@@ -60,8 +58,12 @@ fi
 mkdir -p \
   /etc/nginx/conf.d \
   /etc/nginx/lua \
+  /etc/systemd/system/aws-appconfig-agent.service.d \
   /usr/local/openresty/nginx/modules \
   /usr/local/src \
+  /var/lib/aws-firewall-proxy \
+  /var/log/aws \
+  /var/log/aws-firewall-proxy \
   /var/cache/nginx \
   /var/log/nginx
 
@@ -119,38 +121,61 @@ COMMIT
 EOF
 chmod 600 /etc/sysconfig/iptables
 
-sed "s|__DNS_RESOLVERS__|$DNS_RESOLVERS_FOR_NGINX|g" \
-  "${ASSET_ROOT}/nginx/conf/nginx.conf.template" \
-  > /etc/nginx/nginx.conf
+cp "${ASSET_ROOT}/nginx/conf/nginx.conf.template" /etc/nginx/nginx.conf
 chmod 0644 /etc/nginx/nginx.conf
+
+run_quiet "Installing AWS AppConfig Agent" /var/log/aws-appconfig-agent-install.log \
+  dnf install -y -q https://s3.amazonaws.com/aws-appconfig-downloads/aws-appconfig-agent/linux/x86_64/latest/aws-appconfig-agent.rpm
 
 install -m 0644 "${ASSET_ROOT}/nginx/lua/check_sni.lua" /etc/nginx/lua/check_sni.lua
 install -m 0644 "${ASSET_ROOT}/nginx/lua/debug_log_by_lua.lua" /etc/nginx/lua/debug_log_by_lua.lua
+install -m 0644 "${ASSET_ROOT}/nginx/lua/proxy_runtime_policy.lua" /etc/nginx/lua/proxy_runtime_policy.lua
 install -m 0755 "${ASSET_ROOT}/scripts/refresh-sni-allowlist.sh" /usr/local/sbin/refresh-sni-allowlist.sh
-install -m 0644 "${ASSET_ROOT}/systemd/refresh-sni-allowlist.service" /etc/systemd/system/refresh-sni-allowlist.service
-install -m 0644 "${ASSET_ROOT}/systemd/refresh-sni-allowlist.timer" /etc/systemd/system/refresh-sni-allowlist.timer
+install -m 0755 "${ASSET_ROOT}/scripts/refresh-proxy-runtime-policy.sh" /usr/local/sbin/refresh-proxy-runtime-policy.sh
+install -m 0644 "${ASSET_ROOT}/systemd/refresh-proxy-runtime-policy.service" /etc/systemd/system/refresh-proxy-runtime-policy.service
+install -m 0644 "${ASSET_ROOT}/systemd/refresh-proxy-runtime-policy.timer" /etc/systemd/system/refresh-proxy-runtime-policy.timer
+install -m 0644 "${ASSET_ROOT}/systemd/aws-appconfig-agent.override.conf" /etc/systemd/system/aws-appconfig-agent.service.d/override.conf
 install -m 0644 "${ASSET_ROOT}/systemd/nginx.service" /etc/systemd/system/nginx.service
 install -m 0644 "${ASSET_ROOT}/cloudwatch/amazon-cloudwatch-agent.json" \
   /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
 
-# Persist runtime env that the service exports to the OpenResty master process.
+# Persist the stable local-only nginx env. Mutable traffic policy comes from
+# AppConfig and is rendered to disk by refresh-proxy-runtime-policy.sh.
 cat > /etc/sysconfig/aws-firewall-proxy-runtime << EOF
-DNS_RESOLVERS=$DNS_RESOLVERS
-DNS_QUERIES_PER_SNI=$DNS_QUERIES_PER_SNI
-ENFORCE=1
 PROXY_DEBUG=0
 EOF
 chmod 0644 /etc/sysconfig/aws-firewall-proxy-runtime
 
-# Seed an empty allowlist snippet so nginx -t passes before the first SSM fetch.
-# The default map entry denies all SNIs until refresh-sni-allowlist.service runs.
+# Seed empty runtime config files so nginx -t passes in the AMI build. The
+# first real policy render happens on instance boot before nginx starts.
 cat > /etc/nginx/conf.d/sni_allowlist.conf << 'EOF'
-# Populated by /usr/local/sbin/refresh-sni-allowlist.sh from SSM Parameter Store.
+# Populated by /usr/local/sbin/refresh-proxy-runtime-policy.sh.
 map $client_sni $sni_allowed {
     hostnames;
     default 0;
 }
 EOF
+
+cat > /etc/nginx/conf.d/proxy_resolver.conf << 'EOF'
+# Populated by /usr/local/sbin/refresh-proxy-runtime-policy.sh.
+resolver 169.254.169.253 valid=10s ipv6=off;
+resolver_timeout 5s;
+EOF
+
+cat > /etc/sysconfig/aws-appconfig-agent << 'EOF'
+SERVICE_REGION=
+PREFETCH_LIST=
+EOF
+chmod 0644 /etc/sysconfig/aws-appconfig-agent
+
+cat > /etc/sysconfig/proxy-runtime-sync << 'EOF'
+APPCONFIG_APPLICATION=
+APPCONFIG_ENVIRONMENT=
+APPCONFIG_CONFIGURATION_PROFILE=
+APPCONFIG_AGENT_HOST=localhost
+APPCONFIG_AGENT_PORT=2772
+EOF
+chmod 0644 /etc/sysconfig/proxy-runtime-sync
 
 systemctl daemon-reload
 
@@ -160,8 +185,9 @@ nginx -t
 
 log_step "Enabling services"
 systemctl enable iptables
+systemctl enable aws-appconfig-agent
 systemctl enable nginx
-systemctl enable refresh-sni-allowlist.timer
+systemctl enable refresh-proxy-runtime-policy.timer
 systemctl enable amazon-cloudwatch-agent
 
 run_quiet "Cleaning package manager caches" /var/log/proxy-dnf-clean.log dnf clean all

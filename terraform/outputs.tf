@@ -28,6 +28,11 @@ output "aws_region" {
   value       = var.aws_region
 }
 
+output "proxy_runtime_policy_appconfig_path" {
+  description = "AppConfig application/environment/profile path for the proxy runtime policy"
+  value       = "${aws_appconfig_application.proxy.name}/${aws_appconfig_environment.proxy.name}/${aws_appconfig_configuration_profile.proxy_runtime_policy.name}"
+}
+
 # Consumed by benchmark/run.py to swap the workload default route between the
 # proxy ENI (proxied path) and the ANF endpoint (baseline path).
 output "workload_route_table_id" {

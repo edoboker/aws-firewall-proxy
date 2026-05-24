@@ -2,10 +2,6 @@ load_module /usr/local/openresty/nginx/modules/ngx_stream_original_dst_module.so
 
 user nginx;
 
-env ENFORCE;
-env DNS_RESOLVER;
-env DNS_RESOLVERS;
-env DNS_QUERIES_PER_SNI;
 env PROXY_DEBUG;
 
 worker_processes auto;
@@ -40,10 +36,8 @@ stream {
     lua_add_variable $resolved_ips;
     lua_add_variable $dst_ip;
 
-    resolver __DNS_RESOLVERS__ valid=10s ipv6=off;
-    resolver_timeout 5s;
-
     include /etc/nginx/conf.d/sni_allowlist.conf;
+    include /etc/nginx/conf.d/proxy_resolver.conf;
 
     # The postponed preread hook never fired in this REDIRECT path, so we run
     # the Lua guard early and recover SNI directly from ClientHello.

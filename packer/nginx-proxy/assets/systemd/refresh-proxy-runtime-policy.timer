@@ -1,0 +1,10 @@
+[Unit]
+Description=Refresh nginx runtime policy from AWS AppConfig every 60s
+
+[Timer]
+OnBootSec=15s
+OnUnitActiveSec=60s
+Unit=refresh-proxy-runtime-policy.service
+
+[Install]
+WantedBy=timers.target
