@@ -3,14 +3,13 @@
 # not coupled to, the main proxy stack.
 #
 # Usage:
-#   cd packer/build-infra && terraform init && terraform apply
-#   # Then feed the outputs to packer:
-#   cd ../nginx-proxy
+#   cd terraform/packer-bootstrap && terraform init && terraform apply
+#   # Then feed the outputs to packer (from repo root):
 #   packer build \
 #     -var "git_sha=$(git rev-parse --short HEAD)" \
-#     -var "packer_vpc_id=$(terraform -chdir=../build-infra output -raw vpc_id)" \
-#     -var "packer_subnet_id=$(terraform -chdir=../build-infra output -raw subnet_id)" \
-#     .
+#     -var "packer_vpc_id=$(terraform -chdir=terraform/packer-bootstrap output -raw vpc_id)" \
+#     -var "packer_subnet_id=$(terraform -chdir=terraform/packer-bootstrap output -raw subnet_id)" \
+#     packer/nginx-proxy
 
 terraform {
   required_version = ">= 1.10"

@@ -8,5 +8,13 @@ dependencies = [
     "PyYAML>=6.0",
 ]
 
+[project.optional-dependencies]
+test = ["pytest>=8.0"]
+benchmark = []
+
 [tool.setuptools.packages.find]
 include = ["common*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
