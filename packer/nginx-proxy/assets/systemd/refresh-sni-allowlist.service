@@ -1,9 +1,0 @@
-[Unit]
-Description=Refresh nginx SNI allowlist from SSM Parameter Store
-After=network-online.target
-Wants=network-online.target
-Before=nginx.service
-
-[Service]
-Type=oneshot
-ExecStart=/usr/local/sbin/refresh-sni-allowlist.sh

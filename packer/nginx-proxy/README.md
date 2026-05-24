@@ -105,18 +105,19 @@ The demo Terraform defaults publish:
 - `proxy_dns_queries_per_sni = 3`
 - `proxy_enforcement_mode = "strict"`
 
-The legacy SSM allowlist remains installed only as a compatibility fallback for first boot if AppConfig is temporarily unavailable.
-
 ## What is on the host at boot
 
 - `/etc/nginx/nginx.conf` - OpenResty stream config with the Lua preread guard and the original-dst module loaded
 - `/etc/nginx/lua/check_sni.lua` - parses ClientHello, enforces the allowlist, resolves DNS, and detects spoofing
+- `/etc/nginx/lua/proxy_metrics.lua` - aggregates proxy counters and latency histograms, then flushes them to the local CloudWatch agent StatsD listener
+- `/etc/nginx/lua/log_metrics.lua` - log-phase hook for upstream connect metrics and active-connection cleanup
 - `/etc/nginx/lua/proxy_runtime_policy.lua` - generated Lua runtime policy consumed by `check_sni.lua`
 - `/etc/nginx/lua/debug_log_by_lua.lua` - optional debug-only session summary hook
 - `/etc/nginx/conf.d/sni_allowlist.conf` - generated allowlist map from AppConfig
 - `/etc/nginx/conf.d/proxy_resolver.conf` - generated resolver include from AppConfig
 - `/usr/local/sbin/refresh-proxy-runtime-policy.sh` - renders the AppConfig-backed runtime policy
 - `/etc/sysconfig/aws-firewall-proxy-runtime` - exports only stable local debug state such as `PROXY_DEBUG`
+- `/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json` - boot-rendered CloudWatch agent config with StatsD and host metrics
 - `/etc/sysconfig/proxy-runtime-sync` - AppConfig coordinates for the runtime sync service
 - `/etc/sysconfig/aws-appconfig-agent` - region/prefetch settings for AWS AppConfig Agent
 - `/usr/local/openresty/nginx/modules/ngx_stream_original_dst_module.so` - compiled original-dst module
@@ -145,5 +146,5 @@ volume stays a clean proxy-health signal.
 ## Notes
 
 - The current proxy path drops spoofed connections instead of silently correcting them.
-- AppConfig is the primary runtime policy source. The SSM allowlist remains only as a temporary compatibility fallback during migration.
+- AppConfig is the runtime policy source for the on-host proxy.
 - DNS/original-dst matching is probabilistic for CDN-style domains. Multiple resolvers and repeated queries improve coverage, but they cannot guarantee that the proxy sees every IP a client may have received.

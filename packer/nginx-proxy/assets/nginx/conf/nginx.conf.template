@@ -3,6 +3,7 @@ load_module /usr/local/openresty/nginx/modules/ngx_stream_original_dst_module.so
 user nginx;
 
 env PROXY_DEBUG;
+env METRICS_PUBLISH_INTERVAL_SECONDS;
 
 worker_processes auto;
 error_log /var/log/nginx/error.log warn;
@@ -26,10 +27,12 @@ http {
 
 stream {
     lua_package_path "/etc/nginx/lua/?.lua;;";
+    lua_shared_dict proxy_metrics 1m;
     # DNS fanout can intentionally hit slow or varying resolvers. Keep those
     # low-level cosocket timeouts out of the error log and rely on the
     # structured Lua internal-failure events instead.
     lua_socket_log_errors off;
+    init_worker_by_lua_file /etc/nginx/lua/init_metrics.lua;
 
     lua_add_variable $proxy_decision;
     lua_add_variable $client_sni;
@@ -83,6 +86,7 @@ stream {
         listen 8443;
 
         preread_by_lua_file /etc/nginx/lua/check_sni.lua;
+        log_by_lua_file /etc/nginx/lua/log_metrics.lua;
 
         # Debug-only: uncomment for one extra per-session summary line.
         # log_by_lua_file /etc/nginx/lua/debug_log_by_lua.lua;

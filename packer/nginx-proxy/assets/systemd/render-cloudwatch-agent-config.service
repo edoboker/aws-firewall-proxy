@@ -1,0 +1,11 @@
+[Unit]
+Description=Render CloudWatch agent configuration for the proxy
+Before=amazon-cloudwatch-agent.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/sysconfig/aws-firewall-proxy-runtime
+ExecStart=/usr/local/sbin/render-cloudwatch-agent-config.sh
+
+[Install]
+WantedBy=multi-user.target

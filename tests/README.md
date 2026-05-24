@@ -32,5 +32,6 @@ Set `AWS_REGION` if you deployed outside the default `eu-north-1`.
 - Shared SSM and Terraform-output helpers live under `common/` so the benchmark suite can reuse them.
 - `test_proxy_up.py` checks that the proxy daemon is active.
 - `test_workload_baseline.py` checks that `curl https://<allowed-fqdn>` from the workload succeeds.
+- `test_proxy_metrics.py` waits past the configured publish interval and verifies that direct proxy metrics arrive in CloudWatch.
 - `sni-spoofing-placeholder.md` is the placeholder plan for the live spoof-detection test.
 - `proxy-runtime-placeholder.md` is the placeholder plan for the live proxy-runtime smoke test.

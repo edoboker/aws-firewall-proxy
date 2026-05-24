@@ -20,7 +20,7 @@ Workload EC2  -->  nginx proxy EC2  -->  AWS Network Firewall  -->  NAT GW  --> 
 ```
 
 - **Workload subnet** - client EC2 instance; default route points to the proxy ENI.
-- **Proxy subnet** - transparent OpenResty intercepts TLS via iptables REDIRECT, recovers `SO_ORIGINAL_DST` via a custom C stream module, parses ClientHello in Lua, resolves the SNI through the configured resolver set, and drops spoofed connections. The host enforces a first-layer SNI allowlist from an AppConfig-backed runtime policy, with a temporary SSM compatibility fallback during migration.
+- **Proxy subnet** - transparent OpenResty intercepts TLS via iptables REDIRECT, recovers `SO_ORIGINAL_DST` via a custom C stream module, parses ClientHello in Lua, resolves the SNI through the configured resolver set, and drops spoofed connections. The host enforces a first-layer SNI allowlist from an AppConfig-backed runtime policy.
 - **Firewall subnet** - AWS Network Firewall applies an independent FQDN allowlist using Suricata `dotprefix` rules.
 - **Public subnet** - NAT Gateway for internet egress.
 
@@ -164,7 +164,7 @@ terraform apply
 
 The proxy refresh timer picks up the deployed AppConfig version from the local AppConfig Agent within about 60 seconds and reloads nginx only if the rendered runtime policy changed.
 
-During the compatibility phase, Terraform still maintains the legacy SSM allowlist parameter, but AppConfig is the primary runtime source of truth.
+AppConfig is the runtime source of truth for the proxy policy.
 
 ### 6. Run the benchmark (optional)
 
@@ -190,7 +190,12 @@ Terraform does not deregister the Packer-built AMIs; remove them manually if you
 Observability is tuned for a small CloudWatch footprint, so two verbose signals
 are **off by default** and toggled at the nginx level — no infrastructure change
 needed, because the log group and CloudWatch agent collection are already
-provisioned (see `monitoring/`).
+provisioned (see `docs/observability.md`).
+
+Operational dashboards no longer depend only on log-derived metrics. The proxy
+publishes aggregated metrics directly to the local CloudWatch agent every
+`proxy_metrics_publish_interval_seconds` seconds (default `60`), while the
+debug toggles below remain optional.
 
 **Per-connection access log.** In production this is millions of lines and
 dominates CloudWatch Logs ingestion cost, so it is disabled. To capture it

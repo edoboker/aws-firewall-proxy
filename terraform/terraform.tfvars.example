@@ -21,8 +21,7 @@ allowed_fqdns = [
 ]
 
 # SNIs allowed by the on-host nginx gate (independent of the ANF allowlist above).
-# Terraform publishes these into the AppConfig runtime policy. During the
-# compatibility phase it also keeps the legacy SSM fallback parameter.
+# Terraform publishes these into the AppConfig runtime policy.
 nginx_allowed_snis = [
   "google.com",
   "amazonaws.com",
@@ -32,6 +31,10 @@ nginx_allowed_snis = [
 # AppConfig-backed proxy DNS/enforcement runtime policy.
 proxy_dns_queries_per_sni = 3
 proxy_enforcement_mode    = "strict"
+
+# How often the proxy flushes aggregated metrics and the CloudWatch agent
+# publishes them onward to CloudWatch.
+proxy_metrics_publish_interval_seconds = 60
 
 # Public recursive DNS resolvers the demo Network Firewall policy lets the
 # proxy query directly. Route 53 Resolver (169.254.169.253) is automatically

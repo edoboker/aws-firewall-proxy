@@ -17,6 +17,7 @@
 local DEBUG = (os.getenv("PROXY_DEBUG") or "0") == "1"
 local MAX_CNAME_DEPTH = 5
 local RUNTIME_POLICY_PATH = "/etc/nginx/lua/proxy_runtime_policy.lua"
+local metrics = require("proxy_metrics")
 
 local function q(value)
     if value == nil then
@@ -110,14 +111,30 @@ local function set_decision(decision)
     set_var("proxy_decision", decision)
 end
 
+local function metrics_reason_for_event(event)
+    if event == "resolver_query_failed" then
+        return "dns_failure"
+    end
+
+    return "internal_error"
+end
+
 local function fail_internal(event, fields)
     set_decision(event)
+    metrics.record_block(metrics_reason_for_event(event))
     log_event(ngx.ERR, event, fields)
     return ngx.exit(ngx.ERROR)
 end
 
 local function fail_quiet(decision)
     set_decision(decision)
+    if decision == "deny_allowlist" then
+        metrics.record_block("allowlist_denied")
+    elseif decision == "drop_no_sni" then
+        metrics.record_block("no_sni")
+    else
+        metrics.record_block("internal_error")
+    end
     if DEBUG then
         log_event(ngx.NOTICE, decision, nil)
     end
@@ -463,6 +480,7 @@ end
 local ok, runtime_err = xpcall(function()
     local original_dst = ngx.var.original_dst
 
+    metrics.record_session_start()
     set_var("proxy_decision", "")
     set_var("client_sni", "")
     set_var("dst_ip", "")
@@ -583,6 +601,7 @@ local ok, runtime_err = xpcall(function()
 
     if resolved[dst_ip] then
         set_decision("allow")
+        metrics.record_allow()
         debug_log("allow", {
             sni = clienthello.sni,
             original_dst = original_dst,
@@ -600,6 +619,7 @@ local ok, runtime_err = xpcall(function()
     -- event is recorded in the dedicated sni_spoofing.log via the access_log
     -- `if=$is_spoofing` rule (keyed off decision="mismatch"), not error.log.
     set_decision("mismatch")
+    metrics.record_mismatch(runtime_policy.enforce)
 
     if runtime_policy.enforce then
         return ngx.exit(ngx.ERROR)
@@ -610,6 +630,7 @@ end)
 
 if not ok then
     set_decision("lua_exception")
+    metrics.record_block("internal_error")
     log_event(ngx.ERR, "lua_exception", {
         err = runtime_err,
     })

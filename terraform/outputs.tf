@@ -28,6 +28,21 @@ output "aws_region" {
   value       = var.aws_region
 }
 
+output "proxy_metrics_publish_interval_seconds" {
+  description = "Metrics publish interval for the on-host proxy and CloudWatch agent"
+  value       = var.proxy_metrics_publish_interval_seconds
+}
+
+output "proxy_metric_namespace" {
+  description = "CloudWatch namespace for proxy metrics"
+  value       = "AwsFirewallProxy/Nginx"
+}
+
+output "proxy_enforcement_mode" {
+  description = "Current enforcement mode for proxy spoof mismatches"
+  value       = var.proxy_enforcement_mode
+}
+
 output "proxy_runtime_policy_appconfig_path" {
   description = "AppConfig application/environment/profile path for the proxy runtime policy"
   value       = "${aws_appconfig_application.proxy.name}/${aws_appconfig_environment.proxy.name}/${aws_appconfig_configuration_profile.proxy_runtime_policy.name}"
