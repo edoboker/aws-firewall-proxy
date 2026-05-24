@@ -7,6 +7,17 @@ terraform {
       version = "~> 6.0"
     }
   }
+
+  # Remote state in the bucket created by terraform/bootstrap. Distinct key from
+  # packer/build-infra (separate state file, separate per-key lock). S3-native
+  # locking (use_lockfile) requires Terraform >= 1.10 — no DynamoDB table needed.
+  backend "s3" {
+    bucket       = "aws-firewall-proxy-tfstate-067438588597"
+    key          = "firewall-proxy/terraform.tfstate"
+    region       = "eu-north-1"
+    encrypt      = true
+    use_lockfile = true
+  }
 }
 
 provider "aws" {

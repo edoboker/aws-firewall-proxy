@@ -1,6 +1,9 @@
 POWERSHELL := powershell.exe
 PACKER_WIN_PATH := C:\Windows\Sysnative\packer.exe
 TERRAFORM_WIN_PATH := C:\Windows\Sysnative\terraform.exe
+PYTHON ?= python
+VENV_DIR := .venv
+VENV_PYTHON := $(VENV_DIR)\Scripts\python.exe
 
 AWS_REGION ?= eu-north-1
 PACKER_PROXY_INSTANCE_TYPE ?= c6i.large
@@ -10,7 +13,9 @@ PACKER_BUILD_INFRA_DIR := packer/build-infra
 PACKER_PROXY_DIR := packer/nginx-proxy
 PACKER_WORKLOAD_DIR := packer/workload
 TERRAFORM_DIR := terraform
+TERRAFORM_BOOTSTRAP_DIR := terraform/bootstrap
 
+BOOTSTRAP_APPLY_ARGS ?=
 BUILD_INFRA_APPLY_ARGS ?=
 BUILD_INFRA_DESTROY_ARGS ?=
 PACKER_PROXY_BUILD_ARGS ?=
@@ -22,6 +27,8 @@ TERRAFORM_DESTROY_ARGS ?=
 .DEFAULT_GOAL := help
 
 .PHONY: help \
+	setup test \
+	bootstrap-apply \
 	build-infra-init build-infra-apply build-infra-destroy \
 	packer-validate-proxy packer-validate-workload \
 	packer-build-proxy packer-build-workload packer-build-all \
@@ -30,6 +37,9 @@ TERRAFORM_DESTROY_ARGS ?=
 
 help:
 	@echo Targets:
+	@echo   make setup                        Create .venv and install local Python packages
+	@echo   make test                         Run pytest -v tests via the repo-root .venv
+	@echo   make bootstrap-apply              Create the S3 remote-state bucket (one-time)
 	@echo   make build-infra-apply            Deploy the packer build VPC/subnet
 	@echo   make packer-build-proxy           Build the proxy AMI with OpenResty/Lua/C module
 	@echo   make packer-build-workload        Build the workload AMI
@@ -47,6 +57,17 @@ help:
 	@echo.
 	@echo Example:
 	@echo   make deploy-all BUILD_INFRA_APPLY_ARGS=-auto-approve TERRAFORM_APPLY_ARGS=-auto-approve
+
+setup:
+	@"$(POWERSHELL)" -NoProfile -ExecutionPolicy Bypass -Command "if (-not (Test-Path '$(VENV_PYTHON)')) { & '$(PYTHON)' -m venv '$(VENV_DIR)' }; & '$(VENV_PYTHON)' -m pip install -e . -e .\tests"
+
+test:
+	@"$(POWERSHELL)" -NoProfile -ExecutionPolicy Bypass -Command "if (-not (Test-Path '$(VENV_PYTHON)')) { throw 'Virtualenv missing. Run `make setup` first.' }; & '$(VENV_PYTHON)' -m pytest -v tests"
+
+# One-time: create the S3 bucket that holds remote state for the other stacks.
+# Keeps its own state local (it is the stack that creates the state bucket).
+bootstrap-apply:
+	@"$(POWERSHELL)" -NoProfile -ExecutionPolicy Bypass -Command "$$env:AWS_REGION = '$(AWS_REGION)'; $$env:TF_VAR_aws_region = '$(AWS_REGION)'; & '$(TERRAFORM_WIN_PATH)' -chdir='$(TERRAFORM_BOOTSTRAP_DIR)' init; & '$(TERRAFORM_WIN_PATH)' -chdir='$(TERRAFORM_BOOTSTRAP_DIR)' apply $(BOOTSTRAP_APPLY_ARGS)"
 
 build-infra-init:
 	@"$(POWERSHELL)" -NoProfile -ExecutionPolicy Bypass -Command "$$env:AWS_REGION = '$(AWS_REGION)'; $$env:TF_VAR_aws_region = '$(AWS_REGION)'; & '$(TERRAFORM_WIN_PATH)' -chdir='$(PACKER_BUILD_INFRA_DIR)' init"
