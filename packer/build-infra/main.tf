@@ -8,8 +8,8 @@
 #   cd ../nginx-proxy
 #   packer build \
 #     -var "git_sha=$(git rev-parse --short HEAD)" \
-#     -var "vpc_id=$(terraform -chdir=../build-infra output -raw vpc_id)" \
-#     -var "subnet_id=$(terraform -chdir=../build-infra output -raw subnet_id)" \
+#     -var "packer_vpc_id=$(terraform -chdir=../build-infra output -raw vpc_id)" \
+#     -var "packer_subnet_id=$(terraform -chdir=../build-infra output -raw subnet_id)" \
 #     .
 
 terraform {

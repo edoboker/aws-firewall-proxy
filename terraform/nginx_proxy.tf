@@ -30,7 +30,7 @@ resource "aws_ec2_instance_connect_endpoint" "proxy" {
   tags = { Name = "${local.name}-eic-endpoint" }
 }
 
-# ── nginx Proxy — EC2 with nginx stream module on host ────────────────────────
+# ── nginx Proxy — EC2 with OpenResty, the original-dst module, and Lua guard ─
 
 resource "aws_security_group" "proxy" {
   name        = "${local.name}-nginx-sg"
@@ -71,7 +71,8 @@ resource "aws_instance" "proxy" {
   source_dest_check           = false
   associate_public_ip_address = false
 
-  # AMI bakes in nginx + iptables rules + the refresh-sni-allowlist timer.
+  # AMI bakes in OpenResty, the original-dst module, Lua policy, iptables
+  # rules, and the refresh-sni-allowlist timer.
   # User_data only injects the env-specific SSM parameter coordinates and
   # kicks the timer so the first allowlist fetch happens before nginx starts.
   user_data_base64 = base64encode(<<-EOF

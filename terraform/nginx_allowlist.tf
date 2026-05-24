@@ -7,7 +7,7 @@
 
 resource "aws_ssm_parameter" "nginx_sni_allowlist" {
   name        = "/${local.name}/nginx-sni-allowlist"
-  description = "SNIs allowed by the on-host nginx gate. See packer/nginx-proxy/files/refresh-sni-allowlist.sh."
+  description = "SNIs allowed by the on-host nginx gate. See packer/nginx-proxy/assets/scripts/refresh-sni-allowlist.sh."
   type        = "StringList"
   value       = join(",", var.nginx_allowed_snis)
   tier        = "Standard"

@@ -1,41 +1,36 @@
 # tests
 
-Integration tests for the transparent SNI proxy. Each test executes commands on
-the deployed EC2 instances via AWS SSM Run Command.
+Integration tests for the transparent SNI proxy. Each test executes commands on the deployed EC2 instances via AWS SSM Run Command.
 
 ## Prerequisites
 
-- `terraform apply` has succeeded in `../terraform/` against the AWS account you
-  are pointed at.
-- Both the workload and proxy EC2s appear in `aws ssm describe-instance-information`
-  (give the SSM agent ~1 minute after boot to register).
-- AWS credentials in the environment that can call `ssm:SendCommand` and
-  `ssm:GetCommandInvocation` for those instances.
-- Python 3.10+.
+- `terraform apply` has succeeded in `../terraform/`
+- both the workload and proxy EC2s appear in `aws ssm describe-instance-information`
+- your AWS credentials can call `ssm:SendCommand` and `ssm:GetCommandInvocation`
+- Python 3.10+
+
+Give SSM about a minute after boot to register the instances.
 
 ## Run
 
-All commands below are from the **repo root**. The shared `common` package
-(SSM + terraform-output helpers) lives there and must be installed first;
-the test suite depends on it.
+All commands below are from the repo root. The shared `common` package lives there and must be installed first.
 
-```
+```bash
 python -m venv .venv
-source .venv/bin/activate          # Windows cmd: .venv\Scripts\activate.bat
-                                   # Windows PowerShell: .venv\Scripts\Activate.ps1
-pip install -e .                   # shared `common` package + boto3
-pip install -e ./tests             # this suite + pytest
+source .venv/bin/activate          # Windows PowerShell: .venv\Scripts\Activate.ps1
+pip install -e .
+pip install -e ./tests
 pytest -v tests
 ```
 
-If you skip the first `pip install -e .` you will get
-`ModuleNotFoundError: No module named 'common'` from `conftest.py`.
+If you skip `pip install -e .`, `conftest.py` will fail with `ModuleNotFoundError: No module named 'common'`.
 
-Set `AWS_REGION` if you deployed to anything other than the default `eu-north-1`.
+Set `AWS_REGION` if you deployed outside the default `eu-north-1`.
 
 ## Layout
 
-- Shared SSM / terraform-output helpers live at the repo root under `common/`
-  so the `benchmark/` suite can reuse them.
-- `test_proxy_up.py` — proxy daemon is `active`.
-- `test_workload_baseline.py` — `curl https://<allowed-fqdn>` from the workload returns 2xx/3xx.
+- Shared SSM and Terraform-output helpers live under `common/` so the benchmark suite can reuse them.
+- `test_proxy_up.py` checks that the proxy daemon is active.
+- `test_workload_baseline.py` checks that `curl https://<allowed-fqdn>` from the workload succeeds.
+- `sni-spoofing-placeholder.md` is the placeholder plan for the live spoof-detection test.
+- `proxy-runtime-placeholder.md` is the placeholder plan for the live proxy-runtime smoke test.
