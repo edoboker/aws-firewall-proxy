@@ -24,6 +24,8 @@ Prove that the deployed proxy instance has the full transparent proxy stack work
 
 ## Nice-to-have follow-ups
 
-- verify `/etc/sysconfig/aws-firewall-proxy-runtime` contains the expected `DNS_RESOLVER`
-- verify `/etc/nginx/conf.d/sni_allowlist.conf` has been refreshed from SSM
-- add one debug-mode path later for proving `SPIKE_DEBUG=1` behavior in a non-production test
+- verify `/etc/sysconfig/proxy-runtime-sync` contains the expected AppConfig coordinates
+- verify `/etc/nginx/conf.d/sni_allowlist.conf` has been rendered from AppConfig
+- verify `/etc/nginx/conf.d/proxy_resolver.conf` matches the AppConfig DNS policy
+- verify `/etc/nginx/lua/proxy_runtime_policy.lua` matches the AppConfig enforcement mode and query count
+- add one debug-mode path later for proving `PROXY_DEBUG=1` behavior in a non-production test

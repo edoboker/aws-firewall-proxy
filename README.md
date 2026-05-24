@@ -20,7 +20,7 @@ Workload EC2  -->  nginx proxy EC2  -->  AWS Network Firewall  -->  NAT GW  --> 
 ```
 
 - **Workload subnet** - client EC2 instance; default route points to the proxy ENI.
-- **Proxy subnet** - transparent OpenResty intercepts TLS via iptables REDIRECT, recovers `SO_ORIGINAL_DST` via a custom C stream module, parses ClientHello in Lua, resolves the SNI through the configured resolver set, and drops spoofed connections. The host also enforces a first-layer SNI allowlist sourced from SSM Parameter Store.
+- **Proxy subnet** - transparent OpenResty intercepts TLS via iptables REDIRECT, recovers `SO_ORIGINAL_DST` via a custom C stream module, parses ClientHello in Lua, resolves the SNI through the configured resolver set, and drops spoofed connections. The host enforces a first-layer SNI allowlist from an AppConfig-backed runtime policy, with a temporary SSM compatibility fallback during migration.
 - **Firewall subnet** - AWS Network Firewall applies an independent FQDN allowlist using Suricata `dotprefix` rules.
 - **Public subnet** - NAT Gateway for internet egress.
 
@@ -72,14 +72,7 @@ packer build \
   .
 ```
 
-This builds an AL2023-based AMI with OpenResty, the original-dst C module, the Lua preread guard, iptables-services, awscli v2, CloudWatch agent config, and the `refresh-sni-allowlist` timer baked in.
-
-The `Makefile` demo defaults build the proxy with:
-
-- `DNS_RESOLVERS=169.254.169.253,1.1.1.1,8.8.8.8`
-- `DNS_QUERIES_PER_SNI=3`
-
-That means Lua queries Route 53 Resolver, Cloudflare DNS, and Google DNS three times each, unions all A records it sees, and only then compares the original destination IP. The Terraform demo policy also allows the proxy to send DNS traffic to `1.1.1.1` and `8.8.8.8`.
+This builds an AL2023-based AMI with OpenResty, the original-dst C module, the Lua preread guard, AWS AppConfig Agent, the runtime policy sync service, iptables-services, awscli v2, and CloudWatch agent config baked in. Mutable proxy policy is no longer baked into the AMI.
 
 #### 1c. Build the workload AMI
 
@@ -114,9 +107,19 @@ If you rebuild an AMI later, a follow-up `terraform apply` rolls the correspondi
 Give the EC2 instances about 60 seconds after `apply` finishes so:
 
 - the SSM agent can register
-- the proxy can fetch the initial SNI allowlist from SSM
+- the AppConfig agent can prefetch the deployed runtime policy
+- the proxy can render its initial allowlist, resolver config, and Lua policy before nginx starts
 
 ### 3. Run the integration tests
+
+```bash
+make setup
+make test
+```
+
+The tests use AWS SSM Run Command against the workload and proxy EC2s - no SSH required.
+
+If you prefer the manual flow, it is still:
 
 ```bash
 python -m venv .venv
@@ -125,8 +128,6 @@ pip install -e .
 pip install -e ./tests
 pytest -v tests
 ```
-
-The tests use AWS SSM Run Command against the workload and proxy EC2s - no SSH required.
 
 ### 4. Manual verification
 
@@ -146,25 +147,24 @@ curl -v https://example.com --max-time 10
 # Expected: connection reset / failure because the on-host allowlist denies it
 ```
 
-### 5. Change the allowlist without a redeploy
+### 5. Change proxy runtime policy
 
-The nginx SNI allowlist lives in SSM Parameter Store at:
+Terraform now owns the proxy runtime policy content in AppConfig. Update:
 
-- `/<env>-proxy/nginx-sni-allowlist`
+- `nginx_allowed_snis`
+- `proxy_public_dns_resolvers`
+- `proxy_dns_queries_per_sni`
+- `proxy_enforcement_mode`
 
-Example:
+Then run:
 
 ```bash
-aws ssm put-parameter \
-  --name /dev-proxy/nginx-sni-allowlist \
-  --type StringList \
-  --overwrite \
-  --value "amazonaws.com,cdn.amazonlinux.com"
+terraform apply
 ```
 
-The proxy refresh timer picks that up within about 60 seconds.
+The proxy refresh timer picks up the deployed AppConfig version from the local AppConfig Agent within about 60 seconds and reloads nginx only if the rendered runtime policy changed.
 
-The ANF rule group is still managed by Terraform via `var.allowed_fqdns`; the two allowlists are independent by design.
+During the compatibility phase, Terraform still maintains the legacy SSM allowlist parameter, but AppConfig is the primary runtime source of truth.
 
 ### 6. Run the benchmark (optional)
 
@@ -185,12 +185,40 @@ cd ../packer/build-infra && terraform destroy
 
 Terraform does not deregister the Packer-built AMIs; remove them manually if you want a full cleanup.
 
+## Debugging
+
+Observability is tuned for a small CloudWatch footprint, so two verbose signals
+are **off by default** and toggled at the nginx level — no infrastructure change
+needed, because the log group and CloudWatch agent collection are already
+provisioned (see `monitoring/`).
+
+**Per-connection access log.** In production this is millions of lines and
+dominates CloudWatch Logs ingestion cost, so it is disabled. To capture it
+while debugging:
+
+- On a running proxy instance: uncomment the
+  `access_log /var/log/nginx/access.log proxy;` line in `/etc/nginx/nginx.conf`
+  and `sudo nginx -s reload`.
+- Or bake it into the AMI: uncomment the same line in
+  `packer/nginx-proxy/assets/nginx/conf/nginx.conf.template` and rebuild.
+
+Lines flow to the `/aws/firewall-proxy/nginx/access` group within ~a minute. The
+`proxy` log format records every session with its `decision`, SNI, dst IP, and
+resolved IPs — useful for inspecting *allowed* traffic, which the sparse event
+logs intentionally omit.
+
+**Verbose Lua diagnostics.** Set `PROXY_DEBUG=1` in
+`/etc/sysconfig/aws-firewall-proxy-runtime` and restart nginx to emit
+step-by-step `lua="sni-guard"` NOTICE lines (ClientHello parse details, DNS
+resolution, allow/deny reasoning) to `error.log`.
+
 ## Key design decisions
 
 - **`source_dest_check = false`** on the proxy ENI - required for transparent proxying.
 - **iptables `PREROUTING` REDIRECT** - steers inbound port 443 to the proxy listener on 8443 without client-side configuration.
 - **Custom C module for `SO_ORIGINAL_DST`** - surfaces the pre-NAT destination IP to nginx/OpenResty.
 - **Lua preread policy** - parses ClientHello directly, enforces the allowlist, resolves DNS, and logs spoofing detections.
+- **AppConfig-backed runtime policy** - allowlist, DNS fanout, and enforcement mode are deployed as one runtime document and rendered locally on the proxy.
 - **Configurable DNS fanout** - the proxy can query multiple resolvers repeatedly for each SNI, then union the returned A records before deciding.
 - **Golden AMI via Packer** - avoids boot-time package drift and keeps the proxy runtime reproducible.
 - **Two independent allowlists (nginx + ANF)** - defense in depth; either layer can deny.
@@ -201,9 +229,10 @@ The SNI/original-dst check asks: "does the destination IP appear in the DNS answ
 
 For names such as `google.com`, repeated `nslookup google.com 8.8.8.8` calls may return one different IP each time. Other names, such as `login.microsoftonline.com`, may return 10 or more addresses in a single response. Both behaviors are normal. Large providers use recursive resolver location, cache state, TTLs, load balancing, and CDN edge selection to vary answers.
 
-Production implication: strict dropping on DNS mismatch can false-positive for high-scale CDN-style domains. The project therefore makes the resolver list and query count explicit:
+Production implication: strict dropping on DNS mismatch can false-positive for high-scale CDN-style domains. The project therefore makes the resolver list, query count, and enforcement mode explicit Terraform-managed runtime policy:
 
-- `DNS_RESOLVERS`: comma-separated resolver list baked into the proxy AMI
-- `DNS_QUERIES_PER_SNI`: number of A-record queries per resolver, clamped to `1..16`
+- `proxy_public_dns_resolvers`
+- `proxy_dns_queries_per_sni`
+- `proxy_enforcement_mode`
 
-The demo uses Route 53 Resolver plus `1.1.1.1` and `8.8.8.8`, with three queries per resolver. This improves coverage, but it still does not guarantee completeness. For production workloads, treat the DNS comparison as a high-confidence signal whose enforcement mode should be chosen per risk appetite and domain behavior.
+The demo policy uses Route 53 Resolver plus `1.1.1.1` and `8.8.8.8`, with three queries per resolver. This improves coverage, but it still does not guarantee completeness. For production workloads, treat the DNS comparison as a high-confidence signal whose enforcement mode should be chosen per risk appetite and domain behavior.

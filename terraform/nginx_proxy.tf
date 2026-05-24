@@ -71,18 +71,30 @@ resource "aws_instance" "proxy" {
   source_dest_check           = false
   associate_public_ip_address = false
 
-  # AMI bakes in OpenResty, the original-dst module, Lua policy, iptables
-  # rules, and the refresh-sni-allowlist timer.
-  # User_data only injects the env-specific SSM parameter coordinates and
-  # kicks the timer so the first allowlist fetch happens before nginx starts.
+  # AMI bakes in OpenResty, the original-dst module, Lua policy, the AppConfig
+  # Agent, and the runtime policy sync service.
+  # User_data injects the env-specific AppConfig coordinates plus the temporary
+  # SSM compatibility coordinates, then starts the agent and sync before nginx.
   user_data_base64 = base64encode(<<-EOF
     #!/bin/bash
     set -e
+    cat > /etc/sysconfig/aws-appconfig-agent <<CONF
+    SERVICE_REGION=${var.aws_region}
+    PREFETCH_LIST=${aws_appconfig_application.proxy.name}:${aws_appconfig_environment.proxy.name}:${aws_appconfig_configuration_profile.proxy_runtime_policy.name}
+    CONF
+    cat > /etc/sysconfig/proxy-runtime-sync <<CONF
+    APPCONFIG_APPLICATION=${aws_appconfig_application.proxy.name}
+    APPCONFIG_ENVIRONMENT=${aws_appconfig_environment.proxy.name}
+    APPCONFIG_CONFIGURATION_PROFILE=${aws_appconfig_configuration_profile.proxy_runtime_policy.name}
+    APPCONFIG_AGENT_HOST=localhost
+    APPCONFIG_AGENT_PORT=2772
+    CONF
     cat > /etc/sysconfig/nginx-sni-allowlist <<CONF
     SSM_PARAMETER_NAME=${aws_ssm_parameter.nginx_sni_allowlist.name}
     AWS_REGION=${var.aws_region}
     CONF
-    systemctl start refresh-sni-allowlist.service
+    systemctl start aws-appconfig-agent
+    systemctl start refresh-proxy-runtime-policy.service
     systemctl start nginx
   EOF
   )
