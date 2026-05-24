@@ -46,7 +46,6 @@ run_quiet "Installing build and runtime packages" /var/log/proxy-dnf-install.log
   findutils \
   diffutils \
   iptables-services \
-  awscli-2 \
   amazon-cloudwatch-agent
 
 if ! id nginx >/dev/null 2>&1; then
@@ -152,7 +151,7 @@ EOF
 chmod 0644 /etc/sysconfig/aws-firewall-proxy-runtime
 
 # Seed empty runtime config files so nginx -t passes in the AMI build. The
-# first real policy render happens on instance boot before nginx starts.
+# first real policy render must happen on instance boot before nginx starts.
 cat > /etc/nginx/conf.d/sni_allowlist.conf << 'EOF'
 # Populated by /usr/local/sbin/refresh-proxy-runtime-policy.sh.
 map $client_sni $sni_allowed {

@@ -6,7 +6,8 @@
 #   * /etc/nginx/lua/proxy_runtime_policy.lua
 #
 # If AppConfig is temporarily unavailable, the script keeps the last known good
-# rendered policy. AppConfig is the only runtime source of truth.
+# rendered policy. If no AppConfig policy has ever been rendered on this
+# instance, the sync fails so nginx does not start with stale bootstrap config.
 set -euo pipefail
 
 CONFIG_FILE=/etc/sysconfig/proxy-runtime-sync
@@ -175,4 +176,4 @@ if [[ -f "$CURRENT_POLICY_JSON" ]]; then
     exit 0
 fi
 
-abort "failed to fetch AppConfig policy and no last known good policy was available"
+abort "failed to fetch AppConfig policy and no cached policy was available"

@@ -39,7 +39,7 @@ output "proxy_metric_namespace" {
 }
 
 output "proxy_enforcement_mode" {
-  description = "Current enforcement mode for proxy spoof mismatches"
+  description = "Proxy enforcement mode (strict|audit) - consumed by the test harness to decide whether a denied connection should also fail client-side"
   value       = var.proxy_enforcement_mode
 }
 

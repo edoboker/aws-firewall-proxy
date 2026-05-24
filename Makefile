@@ -27,7 +27,7 @@ TERRAFORM_DESTROY_ARGS ?=
 .DEFAULT_GOAL := help
 
 .PHONY: help \
-	setup test \
+	setup test test-offline \
 	bootstrap-apply \
 	build-infra-init build-infra-apply build-infra-destroy \
 	packer-validate-proxy packer-validate-workload \
@@ -38,7 +38,8 @@ TERRAFORM_DESTROY_ARGS ?=
 help:
 	@echo Targets:
 	@echo   make setup                        Create .venv and install local Python packages
-	@echo   make test                         Run pytest -v tests via the repo-root .venv
+	@echo   make test                         Run pytest -v tests via the repo-root .venv (live tests skip without a deployed stack)
+	@echo   make test-offline                 Run only the offline tests (no AWS / deployed stack needed)
 	@echo   make bootstrap-apply              Create the S3 remote-state bucket (one-time)
 	@echo   make build-infra-apply            Deploy the packer build VPC/subnet
 	@echo   make packer-build-proxy           Build the proxy AMI with OpenResty/Lua/C module
@@ -63,6 +64,10 @@ setup:
 
 test:
 	@"$(POWERSHELL)" -NoProfile -ExecutionPolicy Bypass -Command "if (-not (Test-Path '$(VENV_PYTHON)')) { throw 'Virtualenv missing. Run `make setup` first.' }; & '$(VENV_PYTHON)' -m pytest -v tests"
+
+# The offline subset: schema + terraform static checks. No AWS, no deployed stack.
+test-offline:
+	@"$(POWERSHELL)" -NoProfile -ExecutionPolicy Bypass -Command "if (-not (Test-Path '$(VENV_PYTHON)')) { throw 'Virtualenv missing. Run `make setup` first.' }; & '$(VENV_PYTHON)' -m pytest -v tests/test_appconfig_policy_schema.py tests/test_terraform_static.py"
 
 # One-time: create the S3 bucket that holds remote state for the other stacks.
 # Keeps its own state local (it is the stack that creates the state bucket).
