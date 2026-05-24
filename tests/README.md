@@ -29,21 +29,60 @@ Set `AWS_REGION` if you deployed outside the default `eu-north-1`.
 
 ## Layout
 
-Shared SSM, CloudWatch, and Terraform-output helpers live under `common/` so the
-benchmark suite can reuse them.
+Shared SSM, CloudWatch, and Terraform-output helpers live under `common/` at the
+repo root so the benchmark suite can reuse them. The live tests below read the
+deployed stack's Terraform outputs via the session `outputs` fixture in
+`conftest.py`; if those outputs are unavailable (no stack deployed, or the
+working dir is not `terraform init`-ed), every live test **skips** with a clear
+reason rather than erroring.
 
-**Offline** (no AWS; safe to run anywhere, including CI):
+### Offline tests (no AWS, safe in CI)
 
-- `test_appconfig_policy_schema.py` validates the runtime-policy JSON schema — it accepts a good policy and rejects malformed ones. Needs `jsonschema` (in the `test` extra).
-- `test_terraform_static.py` runs `terraform fmt -check` and `terraform validate`. Skips if `terraform` is missing or the working dir is not initialized.
+- **`test_appconfig_policy_schema.py`** — validates the proxy runtime-policy JSON
+  schema (`terraform/appconfig-policies/proxy_runtime_policy.schema.json`), the
+  contract AppConfig enforces at deploy time and `check_sni.lua` re-checks on the
+  host. It asserts the schema is well-formed, accepts a representative valid
+  policy, and rejects nine malformed ones (bad `mode`, out-of-range
+  `queries_per_sni`, missing/extra keys). Needs `jsonschema` (in the `test` extra);
+  runs in well under a second.
+- **`test_terraform_static.py`** — runs `terraform fmt -check -recursive` and
+  `terraform validate` against `terraform/` so formatting drift or invalid HCL
+  fails fast. It skips the whole module if the `terraform` binary is not on
+  `PATH`, and skips `validate` alone if the working dir has not been initialized.
 
-**Live** (require a deployed stack reachable via SSM, plus AWS credentials):
+### Live tests (need a deployed stack reachable via SSM + AWS credentials)
 
-- `test_proxy_up.py` / `test_proxy_runtime.py` check the proxy daemon is active, `nginx -t` passes, the iptables `:443 → :8443` REDIRECT is present, and the Lua/C-module guard is wired into the effective config.
-- `test_workload_baseline.py` checks that `curl https://<allowed-fqdn>` from the workload succeeds.
-- `test_policy_enforcement.py` checks that a non-allowlisted SNI (`deny_allowlist`) and an SNI-less request (`drop_no_sni`) are dropped, logged to the policy-denied group, and counted by `RequestsBlocked`.
-- `test_sni_spoofing.py` checks that an allowlisted SNI pointed at a wrong IP is detected as `mismatch`, logged to the sni-spoofing group, counted by `SpoofingDetected`, and kept out of the error log (implements `sni-spoofing-placeholder.md`).
+- **`test_proxy_up.py`** — the original liveness check: `systemctl is-active
+  nginx` on the proxy instance returns `active`. Fast (one SSM round-trip).
+- **`test_proxy_runtime.py`** — runtime smoke test of the full transparent-proxy
+  wiring: `nginx -t` passes, `iptables-save` shows the `:443 → :8443` PREROUTING
+  REDIRECT, and the effective config (`nginx -T`) references the Lua guard
+  (`preread_by_lua_file`, `check_sni.lua`) and the original-dst C module. Proves
+  the data path exists before any enforcement test relies on it.
+- **`test_workload_baseline.py`** — the happy path: `curl https://<allowed-fqdn>`
+  from the workload returns 2xx/3xx, confirming allowed traffic flows through the
+  proxy. The FQDN comes from the shared `baseline_fqdn` fixture in `conftest.py`.
+- **`test_policy_enforcement.py`** — proves the proxy *drops* what it should. It
+  curls a non-allowlisted SNI (expects `deny_allowlist`) and an IP-literal URL
+  with no SNI (expects `drop_no_sni`), then asserts the matching line appears in
+  the `policy-denied` log group and the `RequestsBlocked` metric increments.
+  **Important:** the deny-allowlist case uses `curl --resolve` to pin the IP and
+  skip DNS — a plain `curl https://example.org` would be NXDOMAIN'd by the Route 53
+  DNS Firewall (`dns_firewall.tf`) and never reach the proxy, so there would be no
+  SNI to deny. **Timing:** the log-line check returns within seconds, but the
+  metric is derived by a CloudWatch metric filter that lags the log line by a
+  minute or two and is queried on a 60s period — so the metric assertion polls up
+  to 90s and this test commonly takes **~60–90s**.
+- **`test_sni_spoofing.py`** — the core attack test: an allowlisted SNI pointed
+  at a wrong IP via `curl --resolve`. It asserts the `sni-spoofing` log group
+  records `decision="mismatch"` (with the SNI and spoofed `dst_ip`), the
+  `SpoofingDetected` metric increments, and the spoof line does **not** leak into
+  the error log. **Timing:** same as above — the `SpoofingDetected` metric poll
+  dominates, so expect **~60–90s**. The client-side "connection reset" assertion
+  only applies in `strict` enforcement mode (the `proxy_enforcement_mode`
+  fixture); in `audit` mode the line is still logged but the connection succeeds.
 
-Log-line assertions fire within seconds. The `RequestsBlocked` / `SpoofingDetected`
-metric assertions poll for up to a few minutes because metric-filter datapoints
-lag behind the source log lines.
+The two metric-backed tests are the only slow ones. If a CloudWatch datapoint
+legitimately lags past the 90s poll window, the metric assertion can fail even
+though the log-line assertion passed — bump `timeout_seconds` at the
+`wait_for_metric_sum` call site if you hit that.

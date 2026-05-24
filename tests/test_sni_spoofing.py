@@ -1,4 +1,4 @@
-"""Live SNI-spoofing detection test (implements sni-spoofing-placeholder.md).
+"""Live SNI-spoofing detection test.
 
 The core attack the proxy exists to stop: an allowlisted SNI pointed at an IP
 that is not among that SNI's resolved A records. The guard must record a
