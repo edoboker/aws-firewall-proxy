@@ -9,7 +9,7 @@ AWS_REGION ?= eu-north-1
 PACKER_PROXY_INSTANCE_TYPE ?= c6i.large
 PACKER_WORKLOAD_INSTANCE_TYPE ?= t3.small
 
-PACKER_BUILD_INFRA_DIR := packer/build-infra
+PACKER_BUILD_INFRA_DIR := terraform/packer-bootstrap
 PACKER_PROXY_DIR := packer/nginx-proxy
 PACKER_WORKLOAD_DIR := packer/workload
 TERRAFORM_DIR := terraform
@@ -59,7 +59,7 @@ help:
 	@echo   make deploy-all BUILD_INFRA_APPLY_ARGS=-auto-approve TERRAFORM_APPLY_ARGS=-auto-approve
 
 setup:
-	@"$(POWERSHELL)" -NoProfile -ExecutionPolicy Bypass -Command "if (-not (Test-Path '$(VENV_PYTHON)')) { & '$(PYTHON)' -m venv '$(VENV_DIR)' }; & '$(VENV_PYTHON)' -m pip install -e . -e .\tests"
+	@"$(POWERSHELL)" -NoProfile -ExecutionPolicy Bypass -Command "if (-not (Test-Path '$(VENV_PYTHON)')) { & '$(PYTHON)' -m venv '$(VENV_DIR)' }; & '$(VENV_PYTHON)' -m pip install -e '.[test,benchmark]'"
 
 test:
 	@"$(POWERSHELL)" -NoProfile -ExecutionPolicy Bypass -Command "if (-not (Test-Path '$(VENV_PYTHON)')) { throw 'Virtualenv missing. Run `make setup` first.' }; & '$(VENV_PYTHON)' -m pytest -v tests"

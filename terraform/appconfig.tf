@@ -36,7 +36,7 @@ resource "aws_appconfig_configuration_profile" "proxy_runtime_policy" {
 
   validator {
     type    = "JSON_SCHEMA"
-    content = file("${path.module}/proxy_runtime_policy.schema.json")
+    content = file("${path.module}/appconfig-policies/proxy_runtime_policy.schema.json")
   }
 }
 
