@@ -11,6 +11,13 @@ resource "aws_cloudwatch_log_group" "anf_flow" {
 }
 
 locals {
+  public_dns_rules = join("\n", flatten([
+    for idx, resolver in var.proxy_public_dns_resolvers : [
+      "pass udp ${var.proxy_subnet_cidr} any -> ${resolver} 53 (msg:\"allow proxy DNS UDP to ${resolver}\"; sid:${9000 + (idx * 2)}; rev:1;)",
+      "pass tcp ${var.proxy_subnet_cidr} any -> ${resolver} 53 (msg:\"allow proxy DNS TCP to ${resolver}\"; sid:${9001 + (idx * 2)}; rev:1;)"
+    ]
+  ]))
+
   # dotprefix prepends "." to the SNI buffer before matching, so:
   #   content:".google.com"; endswith  matches google.com and *.google.com
   #   but NOT evilgoogle.com (becomes .evilgoogle.com, no suffix match)
@@ -18,6 +25,11 @@ locals {
     for idx, fqdn in var.allowed_fqdns :
     "pass tls ${var.vpc_cidr} any -> $EXTERNAL_NET 443 (tls.sni; dotprefix; content:\".${fqdn}\"; endswith; nocase; msg:\"allow ${fqdn}\"; sid:${1000 + idx}; rev:1;)"
   ])
+
+  stateful_rules = join("\n", compact([
+    local.public_dns_rules,
+    local.fqdn_rules
+  ]))
 
   # Extract the ANF endpoint ID for the single AZ deployment
   anf_endpoint_id = [
@@ -34,7 +46,7 @@ resource "aws_networkfirewall_rule_group" "fqdn_allowlist" {
 
   rule_group {
     rules_source {
-      rules_string = local.fqdn_rules
+      rules_string = local.stateful_rules
     }
 
     stateful_rule_options {
@@ -90,4 +102,3 @@ resource "aws_networkfirewall_logging_configuration" "main" {
     }
   }
 }
-

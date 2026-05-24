@@ -14,12 +14,17 @@ output "workload_instance_id" {
 }
 
 output "allowed_fqdns" {
-  description = "FQDNs the proxy chain permits — consumed by the test harness"
+  description = "FQDNs the proxy chain permits - consumed by the test harness"
   value       = var.allowed_fqdns
 }
 
+output "nginx_allowed_snis" {
+  description = "SNIs allowed by the on-host nginx/OpenResty guard - consumed by the test harness"
+  value       = var.nginx_allowed_snis
+}
+
 output "aws_region" {
-  description = "Region the stack is deployed in — consumed by the test/benchmark harness"
+  description = "Region the stack is deployed in - consumed by the test/benchmark harness"
   value       = var.aws_region
 }
 
@@ -31,11 +36,11 @@ output "workload_route_table_id" {
 }
 
 output "proxy_eni_id" {
-  description = "Primary ENI of the nginx proxy — the proxied route's next hop"
+  description = "Primary ENI of the nginx proxy - the proxied route's next hop"
   value       = aws_instance.proxy.primary_network_interface_id
 }
 
 output "anf_endpoint_id" {
-  description = "ANF VPC endpoint ID — the baseline (no-proxy) route's next hop"
+  description = "ANF VPC endpoint ID - the baseline (no-proxy) route's next hop"
   value       = local.anf_endpoint_id
 }
