@@ -7,6 +7,8 @@ from common.ssm import ssm_exec
 def baseline_fqdn(outputs) -> str:
     fqdns = outputs.get("nginx_allowed_snis") or outputs["allowed_fqdns"]
     assert fqdns, "no baseline fqdn output - check terraform/variables.tf and terraform/outputs.tf"
+    if "google.com" in fqdns:
+        return "www.google.com"
     return fqdns[0]
 
 

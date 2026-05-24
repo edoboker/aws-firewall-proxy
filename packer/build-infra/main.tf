@@ -13,12 +13,22 @@
 #     .
 
 terraform {
-  required_version = ">= 1.5"
+  required_version = ">= 1.10"
   required_providers {
     aws = {
       source  = "hashicorp/aws"
       version = "~> 5.0"
     }
+  }
+
+  # Remote state in the bucket created by terraform/bootstrap. Distinct key from
+  # the main terraform/ stack (separate state file, separate per-key lock).
+  backend "s3" {
+    bucket       = "aws-firewall-proxy-tfstate-067438588597"
+    key          = "firewall-proxy/build-infra.tfstate"
+    region       = "eu-north-1"
+    encrypt      = true
+    use_lockfile = true
   }
 }
 

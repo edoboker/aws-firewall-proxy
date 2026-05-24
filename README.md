@@ -119,14 +119,21 @@ Give the EC2 instances about 60 seconds after `apply` finishes so:
 ### 3. Run the integration tests
 
 ```bash
+make setup
+make test
+```
+
+The tests use AWS SSM Run Command against the workload and proxy EC2s - no SSH required.
+
+If you prefer the manual flow, it is still:
+
+```bash
 python -m venv .venv
 source .venv/bin/activate          # Windows PowerShell: .venv\Scripts\Activate.ps1
 pip install -e .
 pip install -e ./tests
 pytest -v tests
 ```
-
-The tests use AWS SSM Run Command against the workload and proxy EC2s - no SSH required.
 
 ### 4. Manual verification
 
@@ -184,6 +191,33 @@ cd ../packer/build-infra && terraform destroy
 ```
 
 Terraform does not deregister the Packer-built AMIs; remove them manually if you want a full cleanup.
+
+## Debugging
+
+Observability is tuned for a small CloudWatch footprint, so two verbose signals
+are **off by default** and toggled at the nginx level — no infrastructure change
+needed, because the log group and CloudWatch agent collection are already
+provisioned (see `monitoring/`).
+
+**Per-connection access log.** In production this is millions of lines and
+dominates CloudWatch Logs ingestion cost, so it is disabled. To capture it
+while debugging:
+
+- On a running proxy instance: uncomment the
+  `access_log /var/log/nginx/access.log proxy;` line in `/etc/nginx/nginx.conf`
+  and `sudo nginx -s reload`.
+- Or bake it into the AMI: uncomment the same line in
+  `packer/nginx-proxy/assets/nginx/conf/nginx.conf.template` and rebuild.
+
+Lines flow to the `/aws/firewall-proxy/nginx/access` group within ~a minute. The
+`proxy` log format records every session with its `decision`, SNI, dst IP, and
+resolved IPs — useful for inspecting *allowed* traffic, which the sparse event
+logs intentionally omit.
+
+**Verbose Lua diagnostics.** Set `PROXY_DEBUG=1` in
+`/etc/sysconfig/aws-firewall-proxy-runtime` and restart nginx to emit
+step-by-step `lua="sni-guard"` NOTICE lines (ClientHello parse details, DNS
+resolution, allow/deny reasoning) to `error.log`.
 
 ## Key design decisions
 

@@ -8,11 +8,14 @@
 --   * allow only if dst_ip is one of the resolved A records
 --
 -- Logging model:
---   * runtime: WARN on spoof mismatch, ERR on internal failures
---   * debug runtime: set SPIKE_DEBUG=1 for step-by-step diagnostic logs
+--   * spoof mismatch + allowlist deny/drop: recorded in dedicated nginx event
+--     logs (sni_spoofing.log / policy_denied.log) via access_log if= rules,
+--     keyed off $proxy_decision. Not written from here.
+--   * internal failures: ngx.ERR to error.log, headed lua="sni-guard"
+--   * debug runtime: set PROXY_DEBUG=1 for step-by-step diagnostic logs
 
 local ENFORCE = (os.getenv("ENFORCE") or "1") == "1"
-local DEBUG = (os.getenv("SPIKE_DEBUG") or "0") == "1"
+local DEBUG = (os.getenv("PROXY_DEBUG") or "0") == "1"
 local DNS_RESOLVERS = os.getenv("DNS_RESOLVERS") or os.getenv("DNS_RESOLVER") or "169.254.169.253"
 local DNS_QUERIES_PER_SNI = tonumber(os.getenv("DNS_QUERIES_PER_SNI") or "1") or 1
 local MAX_CNAME_DEPTH = 5
@@ -38,14 +41,14 @@ local function set_var(name, value)
 
     if not ok then
         ngx.log(ngx.ERR,
-                'spike_lua="check_sni" event="set_var_failed" name=', q(name),
+                'lua="sni-guard" event="set_var_failed" name=', q(name),
                 ' value=', q(value), ' err=', q(err))
     end
 end
 
 local function log_event(level, event, fields)
     local parts = {
-        'spike_lua="check_sni"',
+        'lua="sni-guard"',
         'event=' .. q(event),
     }
 
@@ -114,7 +117,7 @@ local function build_nameserver_list()
 end
 
 local function set_decision(decision)
-    set_var("spike_decision", decision)
+    set_var("proxy_decision", decision)
 end
 
 local function fail_internal(event, fields)
@@ -410,10 +413,10 @@ end
 local ok, runtime_err = xpcall(function()
     local original_dst = ngx.var.original_dst
 
-    set_var("spike_decision", "")
-    set_var("spike_sni", "")
-    set_var("spike_dst_ip", "")
-    set_var("spike_resolved", "")
+    set_var("proxy_decision", "")
+    set_var("client_sni", "")
+    set_var("dst_ip", "")
+    set_var("resolved_ips", "")
 
     if not original_dst or original_dst == "" then
         return fail_internal("missing_original_dst", {
@@ -430,7 +433,7 @@ local ok, runtime_err = xpcall(function()
             dns_resolver = DNS_RESOLVERS,
         })
     end
-    set_var("spike_dst_ip", dst_ip)
+    set_var("dst_ip", dst_ip)
 
     local record, peek_err = peek_client_hello_record()
     if not record then
@@ -461,7 +464,7 @@ local ok, runtime_err = xpcall(function()
         })
     end
 
-    set_var("spike_sni", clienthello.sni or "")
+    set_var("client_sni", clienthello.sni or "")
 
     debug_log("client_hello_parsed", {
         sni = clienthello.sni,
@@ -518,7 +521,7 @@ local ok, runtime_err = xpcall(function()
         })
     end
 
-    set_var("spike_resolved", resolved_str)
+    set_var("resolved_ips", resolved_str)
 
     if resolved[dst_ip] then
         set_decision("allow")
@@ -534,29 +537,11 @@ local ok, runtime_err = xpcall(function()
         return
     end
 
+    -- SNI spoofing: the requested SNI is allowlisted, but the connection's
+    -- original destination IP is not among the SNI's resolved A records. The
+    -- event is recorded in the dedicated sni_spoofing.log via the access_log
+    -- `if=$is_spoofing` rule (keyed off decision="mismatch"), not error.log.
     set_decision("mismatch")
-    log_event(ngx.WARN, "sni_spoofing_detected", {
-        decision = "mismatch",
-        sni = clienthello.sni,
-        original_dst = original_dst,
-        dst_ip = dst_ip,
-        resolved = resolved_str,
-        sni_allowed = sni_allowed,
-        dns_resolver = dns_resolver_used,
-        dns_queries_per_sni = DNS_QUERIES_PER_SNI,
-        record_content_type = clienthello.record_content_type,
-        record_version = clienthello.record_version,
-        record_len = clienthello.record_len,
-        handshake_type = clienthello.handshake_type,
-        handshake_len = clienthello.handshake_len,
-        client_hello_version = clienthello.client_hello_version,
-        session_id_len = clienthello.session_id_len,
-        cipher_suites_len = clienthello.cipher_suites_len,
-        cipher_suite_count = clienthello.cipher_suite_count,
-        compression_methods_len = clienthello.compression_methods_len,
-        extensions_len = clienthello.extensions_len,
-        extension_count = clienthello.extension_count,
-    })
 
     if ENFORCE then
         return ngx.exit(ngx.ERROR)

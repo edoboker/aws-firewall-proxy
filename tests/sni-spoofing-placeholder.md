@@ -12,22 +12,22 @@ From the workload EC2, send a TLS connection that:
 The proxy should:
 
 - reject the connection during preread
-- emit a structured `WARN` line in the nginx error log
-- preserve the Lua warning format used by `check_sni.lua`
+- emit a structured line in the dedicated SNI-spoofing log (`/var/log/nginx/sni_spoofing.log` → CloudWatch group `/aws/firewall-proxy/nginx/sni-spoofing`), **not** the error log
 
 ## Desired assertions
 
 - the workload-side command fails with connection reset or TLS failure
-- the proxy error log contains `event="sni_spoofing_detected"`
-- the warning includes `decision="mismatch"`
-- the warning includes `sni="..."`
-- the warning includes `original_dst="..."`
-- the warning includes `dst_ip="..."`
-- the warning includes `resolved="..."`
-- the warning includes `dns_resolver="..."`
+- a line appears in the `/aws/firewall-proxy/nginx/sni-spoofing` group (sni_spoofing_log_format)
+- the line includes `decision="mismatch"`
+- the line includes `sni="..."`
+- the line includes `original_dst="..."`
+- the line includes `dst_ip="..."`
+- the line includes `resolved="..."`
+- the `SpoofingDetected` metric (`AwsFirewallProxy/Nginx`) increments
+- the nginx error log contains **no** spoofing line
 
 ## Likely implementation path
 
 - run the spoofed curl command on the workload via SSM
-- fetch or query the proxy logs via CloudWatch Logs or SSM
-- assert that the warning line appears within a short time window after the request
+- fetch or query the `/aws/firewall-proxy/nginx/sni-spoofing` group via CloudWatch Logs or SSM
+- assert that the spoofing line appears within a short time window after the request

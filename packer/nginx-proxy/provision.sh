@@ -138,7 +138,7 @@ cat > /etc/sysconfig/aws-firewall-proxy-runtime << EOF
 DNS_RESOLVERS=$DNS_RESOLVERS
 DNS_QUERIES_PER_SNI=$DNS_QUERIES_PER_SNI
 ENFORCE=1
-SPIKE_DEBUG=0
+PROXY_DEBUG=0
 EOF
 chmod 0644 /etc/sysconfig/aws-firewall-proxy-runtime
 
@@ -146,7 +146,7 @@ chmod 0644 /etc/sysconfig/aws-firewall-proxy-runtime
 # The default map entry denies all SNIs until refresh-sni-allowlist.service runs.
 cat > /etc/nginx/conf.d/sni_allowlist.conf << 'EOF'
 # Populated by /usr/local/sbin/refresh-sni-allowlist.sh from SSM Parameter Store.
-map $spike_sni $sni_allowed {
+map $client_sni $sni_allowed {
     hostnames;
     default 0;
 }
