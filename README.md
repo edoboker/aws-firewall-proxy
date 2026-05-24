@@ -119,14 +119,21 @@ Give the EC2 instances about 60 seconds after `apply` finishes so:
 ### 3. Run the integration tests
 
 ```bash
+make setup
+make test
+```
+
+The tests use AWS SSM Run Command against the workload and proxy EC2s - no SSH required.
+
+If you prefer the manual flow, it is still:
+
+```bash
 python -m venv .venv
 source .venv/bin/activate          # Windows PowerShell: .venv\Scripts\Activate.ps1
 pip install -e .
 pip install -e ./tests
 pytest -v tests
 ```
-
-The tests use AWS SSM Run Command against the workload and proxy EC2s - no SSH required.
 
 ### 4. Manual verification
 
