@@ -154,7 +154,7 @@ Trade-offs on AWS:
 - `/etc/nginx/lua/debug_log_by_lua.lua` - optional debug-only session summary hook
 - `/etc/nginx/conf.d/sni_allowlist.conf` - generated from SSM by the timer
 - `/usr/local/sbin/refresh-sni-allowlist.sh` - renders the SSM-backed allowlist map
-- `/etc/sysconfig/aws-firewall-proxy-runtime` - exports `DNS_RESOLVERS`, `DNS_QUERIES_PER_SNI`, `ENFORCE`, and `SPIKE_DEBUG`
+- `/etc/sysconfig/aws-firewall-proxy-runtime` - exports `DNS_RESOLVERS`, `DNS_QUERIES_PER_SNI`, `ENFORCE`, and `PROXY_DEBUG`
 - `/usr/local/openresty/nginx/modules/ngx_stream_original_dst_module.so` - compiled original-dst module
 - `/etc/sysconfig/iptables` - `PREROUTING -p tcp --dport 443 -j REDIRECT --to-port 8443`, restored at boot by `iptables-services`
 - `/etc/sysctl.d/99-proxy.conf` - `net.ipv4.ip_forward = 1`
@@ -164,15 +164,19 @@ Trade-offs on AWS:
 Default production-style behavior is:
 
 - OpenResty error log level is `warn`
-- SNI spoofing detections are emitted as structured `WARN` lines in `/var/log/nginx/error.log`
-- internal Lua/runtime failures are emitted as `ERR`
-- access logs still go to `/var/log/nginx/access.log` for CloudWatch metrics and request auditing
+- security events go to **dedicated sparse logs**, not the error log:
+  - SNI spoofing detections (`decision="mismatch"`) → `/var/log/nginx/sni_spoofing.log`
+  - allowlist deny / no-SNI drop → `/var/log/nginx/policy_denied.log`
 
-So the security signal is:
+  Both are written by `access_log … if=` rules keyed on `$proxy_decision`, so
+  they fire only on the matching event — not per connection.
+- internal Lua/runtime failures are emitted as `ERR` to `/var/log/nginx/error.log`, headed `lua="sni-guard"`
+- the per-connection access log (`/var/log/nginx/access.log`) is **disabled by default** (debug toggle — see the project README "Debugging")
 
-- `WARN`: suspicious or policy-significant event, such as `event="sni_spoofing_detected"`
-
-That is the right default severity because spoofing attempts are not normal traffic noise, but they are also not necessarily a proxy malfunction.
+So the security signal is the volume of the `sni_spoofing.log` (attacks) and
+`policy_denied.log` (blocked-by-policy) streams, each shipped to its own
+CloudWatch log group. Keeping spoofing out of the error log means error-log
+volume stays a clean proxy-health signal.
 
 ## Notes
 

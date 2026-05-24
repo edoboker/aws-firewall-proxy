@@ -6,7 +6,7 @@ env ENFORCE;
 env DNS_RESOLVER;
 env DNS_RESOLVERS;
 env DNS_QUERIES_PER_SNI;
-env SPIKE_DEBUG;
+env PROXY_DEBUG;
 
 worker_processes auto;
 error_log /var/log/nginx/error.log warn;
@@ -32,13 +32,13 @@ stream {
     lua_package_path "/etc/nginx/lua/?.lua;;";
     # DNS fanout can intentionally hit slow or varying resolvers. Keep those
     # low-level cosocket timeouts out of the error log and rely on the
-    # structured Lua mismatch/internal-failure events instead.
+    # structured Lua internal-failure events instead.
     lua_socket_log_errors off;
 
-    lua_add_variable $spike_decision;
-    lua_add_variable $spike_sni;
-    lua_add_variable $spike_resolved;
-    lua_add_variable $spike_dst_ip;
+    lua_add_variable $proxy_decision;
+    lua_add_variable $client_sni;
+    lua_add_variable $resolved_ips;
+    lua_add_variable $dst_ip;
 
     resolver __DNS_RESOLVERS__ valid=10s ipv6=off;
     resolver_timeout 5s;
@@ -49,12 +49,41 @@ stream {
     # the Lua guard early and recover SNI directly from ClientHello.
     preread_by_lua_no_postpone on;
 
+    # Sparse security-event logs. Each fires only on its matching decision via
+    # `if=`, so these are event-driven, NOT per-connection. They are shipped to
+    # dedicated CloudWatch log groups, separate from nginx error.log.
+    map $proxy_decision $is_spoofing {
+        mismatch 1;
+        default  0;
+    }
+    map $proxy_decision $is_policy_denied {
+        deny_allowlist 1;
+        drop_no_sni    1;
+        default        0;
+    }
+
+    log_format sni_spoofing_log_format
+        '$remote_addr [$time_local] decision="$proxy_decision" '
+        'sni="$client_sni" dst_ip="$dst_ip" '
+        'original_dst="$original_dst" resolved="$resolved_ips"';
+    log_format policy_denied_log_format
+        '$remote_addr [$time_local] decision="$proxy_decision" '
+        'sni="$client_sni" dst_ip="$dst_ip"';
+
+    access_log /var/log/nginx/sni_spoofing.log sni_spoofing_log_format if=$is_spoofing;
+    access_log /var/log/nginx/policy_denied.log policy_denied_log_format if=$is_policy_denied;
+
+    # Debug-only per-connection access log. Off by default: at scale this is
+    # millions of lines and dominates CloudWatch ingestion cost. To capture it,
+    # uncomment the access_log line below and reload nginx (see README
+    # "Debugging"). The log group is already provisioned, so lines flow
+    # immediately — no infra change needed.
     log_format proxy '$remote_addr [$time_local] $protocol $status '
                      '$bytes_sent $bytes_received $session_time '
-                     'sni="$spike_sni" allowed=$sni_allowed '
-                     'decision="$spike_decision" dst_ip="$spike_dst_ip" '
-                     'original_dst="$original_dst" resolved="$spike_resolved"';
-    access_log /var/log/nginx/access.log proxy;
+                     'sni="$client_sni" allowed=$sni_allowed '
+                     'decision="$proxy_decision" dst_ip="$dst_ip" '
+                     'original_dst="$original_dst" resolved="$resolved_ips"';
+    # access_log /var/log/nginx/access.log proxy;
 
     server {
         listen 8443;
@@ -64,7 +93,7 @@ stream {
         # Debug-only: uncomment for one extra per-session summary line.
         # log_by_lua_file /etc/nginx/lua/debug_log_by_lua.lua;
 
-        proxy_pass $spike_sni:443;
+        proxy_pass $client_sni:443;
         proxy_connect_timeout 10s;
         proxy_timeout 600s;
     }

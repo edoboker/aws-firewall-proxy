@@ -7,17 +7,31 @@
       "files": {
         "collect_list": [
           {
-            "file_path": "/var/log/nginx/access.log",
-            "log_group_name": "/aws/firewall-proxy/nginx/access",
+            "file_path": "/var/log/nginx/sni_spoofing.log",
+            "log_group_name": "/aws/firewall-proxy/nginx/sni-spoofing",
             "log_stream_name": "{instance_id}",
             "timestamp_format": "%d/%b/%Y:%H:%M:%S %z",
-            "retention_in_days": 7
+            "retention_in_days": 3
+          },
+          {
+            "file_path": "/var/log/nginx/policy_denied.log",
+            "log_group_name": "/aws/firewall-proxy/nginx/policy-denied",
+            "log_stream_name": "{instance_id}",
+            "timestamp_format": "%d/%b/%Y:%H:%M:%S %z",
+            "retention_in_days": 3
           },
           {
             "file_path": "/var/log/nginx/error.log",
             "log_group_name": "/aws/firewall-proxy/nginx/error",
             "log_stream_name": "{instance_id}",
-            "retention_in_days": 7
+            "retention_in_days": 3
+          },
+          {
+            "file_path": "/var/log/nginx/access.log",
+            "log_group_name": "/aws/firewall-proxy/nginx/access",
+            "log_stream_name": "{instance_id}",
+            "timestamp_format": "%d/%b/%Y:%H:%M:%S %z",
+            "retention_in_days": 3
           }
         ]
       }

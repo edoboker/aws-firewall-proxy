@@ -12,13 +12,13 @@ local function q(value)
 end
 
 ngx.log(ngx.NOTICE,
-        'spike_lua="debug_log_by_lua"',
+        'lua="debug-log"',
         ' event="session_summary"',
         ' phase=', q(ngx.get_phase()),
         ' client=', q(ngx.var.remote_addr or ""),
-        ' spike_sni=', q(ngx.var.spike_sni or ""),
-        ' spike_dst_ip=', q(ngx.var.spike_dst_ip or ""),
-        ' spike_resolved=', q(ngx.var.spike_resolved or ""),
+        ' client_sni=', q(ngx.var.client_sni or ""),
+        ' dst_ip=', q(ngx.var.dst_ip or ""),
+        ' resolved_ips=', q(ngx.var.resolved_ips or ""),
         ' original_dst=', q(ngx.var.original_dst or ""),
         ' status=', q(ngx.var.status or ""),
-        ' spike_decision=', q(ngx.var.spike_decision or ""))
+        ' proxy_decision=', q(ngx.var.proxy_decision or ""))
