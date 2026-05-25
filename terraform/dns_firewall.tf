@@ -48,6 +48,8 @@ resource "aws_route53_resolver_firewall_rule" "block_all" {
 }
 
 resource "aws_route53_resolver_firewall_rule_group_association" "main" {
+  count = var.enable_dns_firewall ? 1 : 0
+
   name                   = "${local.name}-dns-firewall"
   firewall_rule_group_id = aws_route53_resolver_firewall_rule_group.main.id
   vpc_id                 = aws_vpc.main.id

@@ -103,7 +103,9 @@ ln -sf /usr/local/openresty/nginx/sbin/nginx /usr/sbin/nginx
 # IP forwarding for the transparent proxy.
 echo 'net.ipv4.ip_forward = 1' > /etc/sysctl.d/99-proxy.conf
 
-# Persistent PREROUTING redirect (workload's :443 -> OpenResty :8443).
+# Persistent PREROUTING redirects:
+#   * workload :443 -> OpenResty :8443 for TLS/SNI enforcement
+#   * workload :80  -> OpenResty :8081 for experimental HTTP Host enforcement
 cat > /etc/sysconfig/iptables << 'EOF'
 *nat
 :PREROUTING ACCEPT [0:0]
@@ -111,6 +113,7 @@ cat > /etc/sysconfig/iptables << 'EOF'
 :OUTPUT ACCEPT [0:0]
 :POSTROUTING ACCEPT [0:0]
 -A PREROUTING -p tcp --dport 443 -j REDIRECT --to-port 8443
+-A PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 8081
 COMMIT
 *filter
 :INPUT ACCEPT [0:0]
@@ -127,6 +130,7 @@ run_quiet "Installing AWS AppConfig Agent" /var/log/aws-appconfig-agent-install.
   dnf install -y -q https://s3.amazonaws.com/aws-appconfig-downloads/aws-appconfig-agent/linux/x86_64/latest/aws-appconfig-agent.rpm
 
 install -m 0644 "${ASSET_ROOT}/nginx/lua/check_sni.lua" /etc/nginx/lua/check_sni.lua
+install -m 0644 "${ASSET_ROOT}/nginx/lua/check_http_host.lua" /etc/nginx/lua/check_http_host.lua
 install -m 0644 "${ASSET_ROOT}/nginx/lua/init_metrics.lua" /etc/nginx/lua/init_metrics.lua
 install -m 0644 "${ASSET_ROOT}/nginx/lua/log_metrics.lua" /etc/nginx/lua/log_metrics.lua
 install -m 0644 "${ASSET_ROOT}/nginx/lua/proxy_metrics.lua" /etc/nginx/lua/proxy_metrics.lua

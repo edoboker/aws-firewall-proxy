@@ -39,8 +39,22 @@ def test_schema_is_well_formed(validator):
     assert validator is not None
 
 
+def _shared_cache_policy() -> dict:
+    # What terraform/appconfig.tf renders when proxy_dns_mode = "shared-cache":
+    # a single .2 resolver and queries_per_sni = 1 (docs/shared-dns-cache.md §5).
+    return {
+        "allowed_snis": ["google.com", "amazonaws.com"],
+        "dns": {"resolvers": ["169.254.169.253"], "queries_per_sni": 1},
+        "enforcement": {"mode": "strict"},
+    }
+
+
 def test_representative_policy_is_accepted(validator):
     assert list(validator.iter_errors(_valid_policy())) == []
+
+
+def test_shared_cache_policy_is_accepted(validator):
+    assert list(validator.iter_errors(_shared_cache_policy())) == []
 
 
 def _without(key):

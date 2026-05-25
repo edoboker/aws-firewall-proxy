@@ -10,6 +10,9 @@ locals {
   log_group_sni_spoofing  = "/aws/firewall-proxy/nginx/sni-spoofing"
   log_group_policy_denied = "/aws/firewall-proxy/nginx/policy-denied"
   metric_namespace        = "AwsFirewallProxy/Nginx"
+  # CloudWatch dashboards reject metric widget periods below 60 seconds, even
+  # when the agent publishes proxy metrics more frequently.
+  dashboard_metric_period_seconds = max(var.proxy_metrics_publish_interval_seconds, 60)
 }
 
 resource "aws_cloudwatch_log_group" "proxy_sni_spoofing" {
@@ -93,10 +96,10 @@ resource "aws_cloudwatch_dashboard" "proxy" {
           title  = "Requests/sec"
           region = var.aws_region
           view   = "timeSeries"
-          period = var.proxy_metrics_publish_interval_seconds
+          period = local.dashboard_metric_period_seconds
           metrics = [
-            [local.metric_namespace, "Requests", "InstanceId", aws_instance.proxy.id, { id = "m1", stat = "Sum", visible = false }],
-            [{ expression = "m1/${var.proxy_metrics_publish_interval_seconds}", id = "e1", label = "Requests/sec" }],
+            [local.metric_namespace, "Requests", "InstanceId", aws_instance.proxy.id, "metric_type", "counter", { id = "m1", stat = "Sum", visible = false }],
+            [{ expression = "m1/${local.dashboard_metric_period_seconds}", id = "e1", label = "Requests/sec" }],
           ]
         }
       },
@@ -110,11 +113,11 @@ resource "aws_cloudwatch_dashboard" "proxy" {
           title  = "Connections"
           region = var.aws_region
           view   = "timeSeries"
-          period = var.proxy_metrics_publish_interval_seconds
+          period = local.dashboard_metric_period_seconds
           metrics = [
-            [local.metric_namespace, "ActiveConnections", "InstanceId", aws_instance.proxy.id, { label = "Active", stat = "Average" }],
-            [".", "AcceptedConnections", ".", ".", { label = "Accepted", stat = "Sum" }],
-            [".", "BlockedConnections", ".", ".", { label = "Blocked", stat = "Sum" }],
+            [local.metric_namespace, "ActiveConnections", "InstanceId", aws_instance.proxy.id, "metric_type", "gauge", { label = "Active", stat = "Average" }],
+            [".", "AcceptedConnections", ".", ".", ".", "counter", { label = "Accepted", stat = "Sum" }],
+            [".", "BlockedConnections", ".", ".", ".", "counter", { label = "Blocked", stat = "Sum" }],
           ]
         }
       },
@@ -128,12 +131,12 @@ resource "aws_cloudwatch_dashboard" "proxy" {
           title  = "Security and Failure Signals"
           region = var.aws_region
           view   = "timeSeries"
-          period = var.proxy_metrics_publish_interval_seconds
+          period = local.dashboard_metric_period_seconds
           metrics = [
-            [local.metric_namespace, "SniMismatchCount", "InstanceId", aws_instance.proxy.id, { label = "SNI mismatch", stat = "Sum" }],
-            [".", "DnsResolutionFailureCount", ".", ".", { label = "DNS failures", stat = "Sum" }],
-            [".", "UpstreamConnectFailureCount", ".", ".", { label = "Upstream connect failures", stat = "Sum" }],
-            [".", "InternalFailureCount", ".", ".", { label = "Internal failures", stat = "Sum" }],
+            [local.metric_namespace, "SniMismatchCount", "InstanceId", aws_instance.proxy.id, "metric_type", "counter", { label = "SNI mismatch", stat = "Sum" }],
+            [".", "DnsResolutionFailureCount", ".", ".", ".", ".", { label = "DNS failures", stat = "Sum" }],
+            [".", "UpstreamConnectFailureCount", ".", ".", ".", ".", { label = "Upstream connect failures", stat = "Sum" }],
+            [".", "InternalFailureCount", ".", ".", ".", ".", { label = "Internal failures", stat = "Sum" }],
           ]
         }
       },
@@ -147,11 +150,11 @@ resource "aws_cloudwatch_dashboard" "proxy" {
           title  = "Proxy Decision Latency"
           region = var.aws_region
           view   = "timeSeries"
-          period = var.proxy_metrics_publish_interval_seconds
+          period = local.dashboard_metric_period_seconds
           metrics = [
-            [local.metric_namespace, "P50ProxyDecisionLatencyMs", "InstanceId", aws_instance.proxy.id, { label = "p50", stat = "Average" }],
-            [".", "P95ProxyDecisionLatencyMs", ".", ".", { label = "p95", stat = "Average" }],
-            [".", "P99ProxyDecisionLatencyMs", ".", ".", { label = "p99", stat = "Average" }],
+            [local.metric_namespace, "P50ProxyDecisionLatencyMs", "InstanceId", aws_instance.proxy.id, "metric_type", "gauge", { label = "p50", stat = "Average" }],
+            [".", "P95ProxyDecisionLatencyMs", ".", ".", ".", ".", { label = "p95", stat = "Average" }],
+            [".", "P99ProxyDecisionLatencyMs", ".", ".", ".", ".", { label = "p99", stat = "Average" }],
           ]
           yAxis = {
             left = {
@@ -170,11 +173,11 @@ resource "aws_cloudwatch_dashboard" "proxy" {
           title  = "Upstream Connect Latency"
           region = var.aws_region
           view   = "timeSeries"
-          period = var.proxy_metrics_publish_interval_seconds
+          period = local.dashboard_metric_period_seconds
           metrics = [
-            [local.metric_namespace, "P50UpstreamConnectLatencyMs", "InstanceId", aws_instance.proxy.id, { label = "p50", stat = "Average" }],
-            [".", "P95UpstreamConnectLatencyMs", ".", ".", { label = "p95", stat = "Average" }],
-            [".", "P99UpstreamConnectLatencyMs", ".", ".", { label = "p99", stat = "Average" }],
+            [local.metric_namespace, "P50UpstreamConnectLatencyMs", "InstanceId", aws_instance.proxy.id, "metric_type", "gauge", { label = "p50", stat = "Average" }],
+            [".", "P95UpstreamConnectLatencyMs", ".", ".", ".", ".", { label = "p95", stat = "Average" }],
+            [".", "P99UpstreamConnectLatencyMs", ".", ".", ".", ".", { label = "p99", stat = "Average" }],
           ]
           yAxis = {
             left = {
@@ -193,7 +196,7 @@ resource "aws_cloudwatch_dashboard" "proxy" {
           title  = "Host Saturation"
           region = var.aws_region
           view   = "timeSeries"
-          period = var.proxy_metrics_publish_interval_seconds
+          period = local.dashboard_metric_period_seconds
           metrics = [
             [local.metric_namespace, "CPUUtilization", "InstanceId", aws_instance.proxy.id, { label = "CPU", stat = "Average" }],
             [".", "MemoryUtilization", ".", ".", { label = "Memory", stat = "Average" }],
@@ -217,7 +220,7 @@ resource "aws_cloudwatch_dashboard" "proxy" {
           title  = "Network Throughput"
           region = var.aws_region
           view   = "timeSeries"
-          period = var.proxy_metrics_publish_interval_seconds
+          period = local.dashboard_metric_period_seconds
           metrics = [
             ["AWS/EC2", "NetworkIn", "InstanceId", aws_instance.proxy.id, { label = "NetworkIn", stat = "Sum" }],
             [".", "NetworkOut", ".", ".", { label = "NetworkOut", stat = "Sum" }],

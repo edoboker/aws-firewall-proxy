@@ -64,3 +64,24 @@ output "anf_endpoint_id" {
   description = "ANF VPC endpoint ID - the baseline (no-proxy) route's next hop"
   value       = local.anf_endpoint_id
 }
+
+# Shared-DNS (T2). Null unless var.enable_shared_dns.
+output "bind_resolver_private_ip" {
+  description = "Private IP of the BIND9 resolver; the forwarding-rule target IP added in T4"
+  value       = var.enable_shared_dns ? aws_instance.bind[0].private_ip : null
+}
+
+output "shared_dns_vpc_peering_connection_id" {
+  description = "VPC peering connection ID between the workload VPC and DNS VPC; null unless shared DNS is enabled"
+  value       = var.enable_shared_dns ? aws_vpc_peering_connection.workload_dns[0].id : null
+}
+
+output "shared_dns_resolver_outbound_endpoint_id" {
+  description = "Route 53 Resolver outbound endpoint ID for shared DNS; null unless shared DNS is enabled"
+  value       = var.enable_shared_dns ? aws_route53_resolver_endpoint.shared_dns_outbound[0].id : null
+}
+
+output "shared_dns_resolver_rule_ids" {
+  description = "Forwarding rule IDs keyed by forwarded domain; empty unless shared DNS is enabled"
+  value       = { for domain, rule in aws_route53_resolver_rule.shared_dns_forward : domain => rule.id }
+}

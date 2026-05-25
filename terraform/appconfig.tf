@@ -1,8 +1,15 @@
 locals {
-  proxy_dns_resolvers = concat(
+  # `shared-cache` resolves once through the VPC .2 resolver only: the shared BIND9
+  # cache behind the Resolver forwarding rule (docs/shared-dns-cache.md §5) provides
+  # completeness, so fanout across public resolvers is neither needed nor wanted.
+  # `fanout` keeps the multi-resolver, repeated-query strategy. The proxy never points
+  # at BIND9 directly in either mode — .2 stays on the DNS Firewall path.
+  proxy_dns_resolvers = var.proxy_dns_mode == "shared-cache" ? ["169.254.169.253"] : concat(
     ["169.254.169.253"],
     [for resolver in var.proxy_public_dns_resolvers : resolver if resolver != "169.254.169.253"]
   )
+
+  proxy_dns_queries_per_sni = var.proxy_dns_mode == "shared-cache" ? 1 : var.proxy_dns_queries_per_sni
 
   # MVP choice: keep the AppConfig document focused on traffic policy
   # (`allowed_snis`, DNS behavior, enforcement mode). The metrics publish
@@ -14,7 +21,7 @@ locals {
     allowed_snis = var.nginx_allowed_snis
     dns = {
       resolvers       = local.proxy_dns_resolvers
-      queries_per_sni = var.proxy_dns_queries_per_sni
+      queries_per_sni = local.proxy_dns_queries_per_sni
     }
     enforcement = {
       mode = var.proxy_enforcement_mode

@@ -38,6 +38,7 @@ stream {
     lua_add_variable $client_sni;
     lua_add_variable $resolved_ips;
     lua_add_variable $dst_ip;
+    lua_add_variable $proxy_target;
 
     include /etc/nginx/conf.d/sni_allowlist.conf;
     include /etc/nginx/conf.d/proxy_resolver.conf;
@@ -92,6 +93,17 @@ stream {
         # log_by_lua_file /etc/nginx/lua/debug_log_by_lua.lua;
 
         proxy_pass $client_sni:443;
+        proxy_connect_timeout 10s;
+        proxy_timeout 600s;
+    }
+
+    server {
+        listen 8081;
+
+        preread_by_lua_file /etc/nginx/lua/check_http_host.lua;
+        log_by_lua_file /etc/nginx/lua/log_metrics.lua;
+
+        proxy_pass $proxy_target;
         proxy_connect_timeout 10s;
         proxy_timeout 600s;
     }

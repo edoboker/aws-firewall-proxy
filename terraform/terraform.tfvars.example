@@ -29,6 +29,13 @@ nginx_allowed_snis = [
 ]
 
 # AppConfig-backed proxy DNS/enforcement runtime policy.
+# proxy_dns_mode: "fanout" (query multiple resolvers repeatedly) or
+# "shared-cache" (resolve once via the .2 resolver, relying on the shared BIND9
+# cache — meaningful once the Resolver forwarding path / T4 is in place).
+# In shared-cache mode the resolver list collapses to .2 and queries_per_sni is
+# forced to 1, so proxy_dns_queries_per_sni / proxy_public_dns_resolvers below
+# apply only to fanout mode.
+proxy_dns_mode            = "fanout"
 proxy_dns_queries_per_sni = 3
 proxy_enforcement_mode    = "strict"
 
@@ -43,3 +50,14 @@ proxy_public_dns_resolvers = [
   "1.1.1.1",
   "8.8.8.8"
 ]
+
+# Shared-DNS stack (docs/shared-dns-cache.md). Off by default; the BIND9 AMI
+# (packer/bind-dns) must exist before enabling. CIDRs must not overlap vpc_cidr.
+enable_shared_dns       = false
+dns_vpc_cidr            = "10.1.0.0/16"
+dns_private_subnet_cidr = "10.1.1.0/24"
+bind_instance_type      = "t3.micro"
+bind_min_cache_ttl      = 30
+# Empty means forward allowed_fqdns. Override only when the shared DNS cache
+# should cover a different subset of allowed domains.
+forwarded_domains = []

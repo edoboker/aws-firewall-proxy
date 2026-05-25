@@ -31,3 +31,11 @@ PSK-only resumption in TLS 1.3 permits the ClientHello to omit `server_name`. Wi
 Raw TCP, gRPC over h2c without a higher-layer name binding, custom binary protocols. There is no field the proxy can bind a hostname to.
 
 **Mitigation:** block by default at ANF (allowlist is TLS over TCP/443 only). See `production-grade-plan.md` §20 for the explicit non-goal statement.
+
+## 5. Off-path DNS resolvers (DoT / DoQ / DoH)
+
+If the workload can resolve a name without traversing the VPC `.2` resolver, the shared-cache guarantee collapses: the client's lookup never lands in the shared BIND9 cache, the proxy's later verification lookup is independent again, and both the determinism and the SNI-spoofing detection are lost. See `shared-dns-cache.md` §5.1.
+
+**Mitigation:**
+- **DoT (TCP/853) and DoQ (UDP/853)** run on distinct ports — drop both at ANF (`firewall.tf`, sids 8000–8001). Clients fall back to Do53, which the egress path controls.
+- **DoH (HTTPS/443)** is indistinguishable from normal HTTPS by port, so it is *contained by existing controls*, not a dedicated rule: egress is SNI-allowlisted (so **never allowlist public DoH endpoints** like `dns.google` or `cloudflare-dns.com`), and DoH bootstrapped to a bare IP carries no SNI and is dropped by the `drop_no_sni` path in `check_sni.lua`.
