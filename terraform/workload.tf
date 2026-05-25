@@ -30,3 +30,13 @@ resource "aws_instance" "workload" {
   associate_public_ip_address = false
   tags                        = { Name = "${local.name}-workload" }
 }
+
+resource "aws_instance" "direct_workload" {
+  ami                         = data.aws_ami.workload.id
+  instance_type               = var.workload_instance_type
+  subnet_id                   = aws_subnet.direct_workload.id
+  vpc_security_group_ids      = [aws_security_group.workload.id]
+  iam_instance_profile        = aws_iam_instance_profile.workload.name
+  associate_public_ip_address = false
+  tags                        = { Name = "${local.name}-direct-workload" }
+}

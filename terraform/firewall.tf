@@ -11,6 +11,8 @@ resource "aws_cloudwatch_log_group" "anf_flow" {
 }
 
 locals {
+  lambda_ip_fallback_rule_group_arns = var.enable_lambda_ip_fallback ? [aws_networkfirewall_rule_group.lambda_ip_fallback[0].arn] : []
+
   public_dns_rules = join("\n", flatten([
     for idx, resolver in var.proxy_public_dns_resolvers : [
       "pass udp ${var.proxy_subnet_cidr} any -> ${resolver} 53 (msg:\"allow proxy DNS UDP to ${resolver}\"; sid:${9000 + (idx * 2)}; rev:1;)",
@@ -92,6 +94,15 @@ resource "aws_networkfirewall_firewall_policy" "main" {
     stateful_rule_group_reference {
       resource_arn = aws_networkfirewall_rule_group.fqdn_allowlist.arn
       priority     = 1
+    }
+
+    dynamic "stateful_rule_group_reference" {
+      for_each = local.lambda_ip_fallback_rule_group_arns
+
+      content {
+        resource_arn = stateful_rule_group_reference.value
+        priority     = 2
+      }
     }
 
     stateful_default_actions = ["aws:drop_established"]

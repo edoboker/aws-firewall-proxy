@@ -13,6 +13,11 @@ output "workload_instance_id" {
   value       = aws_instance.workload.id
 }
 
+output "direct_workload_instance_id" {
+  description = "Instance ID of the no-proxy workload client EC2"
+  value       = aws_instance.direct_workload.id
+}
+
 output "allowed_fqdns" {
   description = "FQDNs the proxy chain permits - consumed by the test harness"
   value       = var.allowed_fqdns
@@ -55,6 +60,11 @@ output "workload_route_table_id" {
   value       = aws_route_table.workload.id
 }
 
+output "direct_workload_route_table_id" {
+  description = "Route table whose 0.0.0.0/0 entry steers the no-proxy workload directly through ANF"
+  value       = aws_route_table.direct_workload.id
+}
+
 output "proxy_eni_id" {
   description = "Primary ENI of the nginx proxy - the proxied route's next hop"
   value       = aws_instance.proxy.primary_network_interface_id
@@ -65,23 +75,22 @@ output "anf_endpoint_id" {
   value       = local.anf_endpoint_id
 }
 
-# Shared-DNS (T2). Null unless var.enable_shared_dns.
-output "bind_resolver_private_ip" {
-  description = "Private IP of the BIND9 resolver; the forwarding-rule target IP added in T4"
-  value       = var.enable_shared_dns ? aws_instance.bind[0].private_ip : null
+output "lambda_ip_fallback_prefix_list_id" {
+  description = "First managed prefix list updated by the parallel ruleset-generator Lambda; null unless enabled"
+  value       = var.enable_lambda_ip_fallback ? aws_ec2_managed_prefix_list.lambda_ip_fallback[0].id : null
 }
 
-output "shared_dns_vpc_peering_connection_id" {
-  description = "VPC peering connection ID between the workload VPC and DNS VPC; null unless shared DNS is enabled"
-  value       = var.enable_shared_dns ? aws_vpc_peering_connection.workload_dns[0].id : null
+output "lambda_ip_fallback_prefix_list_ids" {
+  description = "All managed prefix lists updated by the parallel ruleset-generator Lambda; empty unless enabled"
+  value       = var.enable_lambda_ip_fallback ? aws_ec2_managed_prefix_list.lambda_ip_fallback[*].id : []
 }
 
-output "shared_dns_resolver_outbound_endpoint_id" {
-  description = "Route 53 Resolver outbound endpoint ID for shared DNS; null unless shared DNS is enabled"
-  value       = var.enable_shared_dns ? aws_route53_resolver_endpoint.shared_dns_outbound[0].id : null
+output "lambda_ip_fallback_rule_group_arn" {
+  description = "Network Firewall rule group ARN for the parallel ruleset-generator path; null unless enabled"
+  value       = var.enable_lambda_ip_fallback ? aws_networkfirewall_rule_group.lambda_ip_fallback[0].arn : null
 }
 
-output "shared_dns_resolver_rule_ids" {
-  description = "Forwarding rule IDs keyed by forwarded domain; empty unless shared DNS is enabled"
-  value       = { for domain, rule in aws_route53_resolver_rule.shared_dns_forward : domain => rule.id }
+output "lambda_ip_fallback_function_name" {
+  description = "Parallel ruleset-generator Lambda function name; null unless enabled"
+  value       = var.enable_lambda_ip_fallback ? aws_lambda_function.lambda_ip_fallback[0].function_name : null
 }

@@ -48,6 +48,14 @@ resource "aws_security_group" "ssm_endpoints" {
   }
 
   ingress {
+    description = "HTTPS from direct workload subnet"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = [var.direct_workload_subnet_cidr]
+  }
+
+  ingress {
     description = "HTTPS from proxy subnet"
     from_port   = 443
     to_port     = 443

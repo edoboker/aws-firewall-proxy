@@ -4,11 +4,12 @@ aws_region        = "eu-north-1"
 availability_zone = "eu-north-1a"
 environment       = "dev"
 
-vpc_cidr             = "10.0.0.0/16"
-workload_subnet_cidr = "10.0.1.0/24"
-proxy_subnet_cidr    = "10.0.2.0/24"
-firewall_subnet_cidr = "10.0.3.0/24"
-public_subnet_cidr   = "10.0.4.0/24"
+vpc_cidr                    = "10.0.0.0/16"
+workload_subnet_cidr        = "10.0.1.0/24"
+direct_workload_subnet_cidr = "10.0.5.0/24"
+proxy_subnet_cidr           = "10.0.2.0/24"
+firewall_subnet_cidr        = "10.0.3.0/24"
+public_subnet_cidr          = "10.0.4.0/24"
 
 proxy_instance_type    = "t3.small"
 workload_instance_type = "t3.micro"
@@ -29,19 +30,26 @@ nginx_allowed_snis = [
 ]
 
 # AppConfig-backed proxy DNS/enforcement runtime policy.
-# proxy_dns_mode: "fanout" (query multiple resolvers repeatedly) or
-# "shared-cache" (resolve once via the .2 resolver, relying on the shared BIND9
-# cache — meaningful once the Resolver forwarding path / T4 is in place).
-# In shared-cache mode the resolver list collapses to .2 and queries_per_sni is
-# forced to 1, so proxy_dns_queries_per_sni / proxy_public_dns_resolvers below
-# apply only to fanout mode.
-proxy_dns_mode            = "fanout"
 proxy_dns_queries_per_sni = 3
 proxy_enforcement_mode    = "strict"
 
 # How often the proxy flushes aggregated metrics and the CloudWatch agent
 # publishes them onward to CloudWatch.
 proxy_metrics_publish_interval_seconds = 20
+
+# Experimental Lambda IP fallback. When enabled, the main stack creates the
+# resolver Lambda, managed prefix list, separate IP-set-backed stateful rule
+# group, and attaches that rule group to the firewall policy.
+enable_lambda_ip_fallback          = false
+enable_lambda_ip_fallback_schedule = false
+lambda_ip_fallback_fqdns = [
+  "login.microsoftonline.com",
+  "wiz.io",
+  "amazon.com",
+  "ynet.co.il",
+  "github.com",
+  "gitlab.com"
+]
 
 # Public recursive DNS resolvers the demo Network Firewall policy lets the
 # proxy query directly. Route 53 Resolver (169.254.169.253) is automatically
@@ -50,14 +58,3 @@ proxy_public_dns_resolvers = [
   "1.1.1.1",
   "8.8.8.8"
 ]
-
-# Shared-DNS stack (docs/shared-dns-cache.md). Off by default; the BIND9 AMI
-# (packer/bind-dns) must exist before enabling. CIDRs must not overlap vpc_cidr.
-enable_shared_dns       = false
-dns_vpc_cidr            = "10.1.0.0/16"
-dns_private_subnet_cidr = "10.1.1.0/24"
-bind_instance_type      = "t3.micro"
-bind_min_cache_ttl      = 30
-# Empty means forward allowed_fqdns. Override only when the shared DNS cache
-# should cover a different subset of allowed domains.
-forwarded_domains = []

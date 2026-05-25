@@ -28,6 +28,12 @@ variable "workload_subnet_cidr" {
   default     = "10.0.1.0/24"
 }
 
+variable "direct_workload_subnet_cidr" {
+  description = "CIDR block for the no-proxy workload subnet that routes directly through AWS Network Firewall"
+  type        = string
+  default     = "10.0.5.0/24"
+}
+
 variable "proxy_subnet_cidr" {
   description = "CIDR block for the proxy subnet"
   type        = string
@@ -93,17 +99,6 @@ variable "proxy_dns_queries_per_sni" {
   }
 }
 
-variable "proxy_dns_mode" {
-  description = "Proxy DNS resolution attitude. `fanout` queries multiple resolvers repeatedly to widen the observed RRset; `shared-cache` resolves once through the VPC .2 resolver only, relying on the shared BIND9 cache (docs/shared-dns-cache.md) for completeness. Switching to `shared-cache` is meaningful only once the Resolver forwarding path (T4) is in place."
-  type        = string
-  default     = "fanout"
-
-  validation {
-    condition     = contains(["fanout", "shared-cache"], var.proxy_dns_mode)
-    error_message = "Proxy DNS mode must be either fanout or shared-cache."
-  }
-}
-
 variable "proxy_enforcement_mode" {
   description = "Whether the on-host proxy enforces mismatches (`strict`) or only logs them (`audit`)."
   type        = string
@@ -126,40 +121,54 @@ variable "proxy_metrics_publish_interval_seconds" {
   }
 }
 
-# ── Shared-DNS feature (docs/shared-dns-cache.md) ─────────────────────────────
-
-variable "enable_shared_dns" {
-  description = "Provision the shared-DNS stack: a dedicated DNS VPC and a BIND9 recursive resolver (T2), and in later tasks the Route 53 Resolver forwarding path. Off by default so the existing single-VPC deployment is unaffected. Requires the BIND9 AMI (packer/bind-dns) to exist before enabling."
+variable "enable_lambda_ip_fallback" {
+  description = "Provision the experimental parallel ruleset-generator resources in the main stack and attach their IP-set-backed TLS rule group to the main firewall policy."
   type        = bool
   default     = false
 }
 
-variable "dns_vpc_cidr" {
-  description = "CIDR block for the dedicated DNS VPC that hosts BIND9. Must not overlap var.vpc_cidr (the two are peered in T3)."
-  type        = string
-  default     = "10.1.0.0/16"
+variable "lambda_ip_fallback_fqdns" {
+  description = "Exact FQDNs resolved by the parallel ruleset-generator MVP."
+  type        = list(string)
+  default     = ["login.microsoftonline.com", "wiz.io"]
 }
 
-variable "dns_private_subnet_cidr" {
-  description = "CIDR for the private subnet that holds the BIND9 instance."
-  type        = string
-  default     = "10.1.1.0/24"
+variable "lambda_ip_fallback_max_addresses_per_fqdn" {
+  description = "Maximum number of IPv4 addresses to publish for each ruleset-generator FQDN."
+  type        = number
+  default     = 16
+
+  validation {
+    condition     = var.lambda_ip_fallback_max_addresses_per_fqdn >= 1 && var.lambda_ip_fallback_max_addresses_per_fqdn <= 64
+    error_message = "lambda_ip_fallback_max_addresses_per_fqdn must be between 1 and 64."
+  }
 }
 
-variable "bind_instance_type" {
-  description = "EC2 instance type for the BIND9 resolver."
-  type        = string
-  default     = "t3.micro"
+variable "lambda_ip_fallback_prefix_list_max_entries" {
+  description = "Maximum entries per ruleset-generator managed prefix list. Additional prefix lists are created when the FQDN/address cap exceeds this value."
+  type        = number
+  default     = 1000
+
+  validation {
+    condition     = var.lambda_ip_fallback_prefix_list_max_entries >= 1 && var.lambda_ip_fallback_prefix_list_max_entries <= 1000
+    error_message = "lambda_ip_fallback_prefix_list_max_entries must be between 1 and 1000."
+  }
 }
 
-variable "bind_min_cache_ttl" {
-  description = "Floor (seconds) for how long BIND9 caches an RRset even when the authoritative TTL is shorter, so the proxy's follow-up resolution sees the same RRset the client did (docs/shared-dns-cache.md §4.1). Passed to the BIND9 AMI via /etc/sysconfig/bind-tuning."
+variable "lambda_ip_fallback_timeout_seconds" {
+  description = "Timeout for the parallel ruleset-generator Lambda."
   type        = number
   default     = 30
 }
 
-variable "forwarded_domains" {
-  description = "Domain suffixes forwarded from the workload VPC resolver to BIND9 in shared-DNS mode. Empty means use allowed_fqdns. Autodefined Resolver rules such as AWS internal names may still resolve locally unless overridden by an equally specific conditional forwarding rule."
-  type        = list(string)
-  default     = []
+variable "enable_lambda_ip_fallback_schedule" {
+  description = "Create an EventBridge schedule for the parallel ruleset-generator Lambda. The Lambda can still be invoked manually when false."
+  type        = bool
+  default     = false
+}
+
+variable "lambda_ip_fallback_schedule_expression" {
+  description = "EventBridge schedule expression for the parallel ruleset-generator Lambda when scheduling is enabled."
+  type        = string
+  default     = "rate(5 minutes)"
 }

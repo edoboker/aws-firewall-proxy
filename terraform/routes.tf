@@ -17,13 +17,20 @@ resource "aws_route_table_association" "workload" {
   route_table_id = aws_route_table.workload.id
 }
 
-resource "aws_route" "workload_to_dns_vpc" {
-  count                     = local.dns_enabled
-  route_table_id            = aws_route_table.workload.id
-  destination_cidr_block    = var.dns_vpc_cidr
-  vpc_peering_connection_id = aws_vpc_peering_connection.workload_dns[0].id
+resource "aws_route_table" "direct_workload" {
+  vpc_id = aws_vpc.main.id
+  tags   = { Name = "${local.name}-direct-workload-rt" }
+}
 
-  depends_on = [aws_vpc_peering_connection_accepter.workload_dns]
+resource "aws_route" "direct_workload_to_firewall" {
+  route_table_id         = aws_route_table.direct_workload.id
+  destination_cidr_block = "0.0.0.0/0"
+  vpc_endpoint_id        = local.anf_endpoint_id
+}
+
+resource "aws_route_table_association" "direct_workload" {
+  subnet_id      = aws_subnet.direct_workload.id
+  route_table_id = aws_route_table.direct_workload.id
 }
 
 # RT-2: Proxy → ANF endpoint (ANF applies FQDN allowlist to all traffic)
@@ -41,15 +48,6 @@ resource "aws_route" "proxy_to_firewall" {
 resource "aws_route_table_association" "proxy" {
   subnet_id      = aws_subnet.proxy.id
   route_table_id = aws_route_table.proxy.id
-}
-
-resource "aws_route" "proxy_to_dns_vpc" {
-  count                     = local.dns_enabled
-  route_table_id            = aws_route_table.proxy.id
-  destination_cidr_block    = var.dns_vpc_cidr
-  vpc_peering_connection_id = aws_vpc_peering_connection.workload_dns[0].id
-
-  depends_on = [aws_vpc_peering_connection_accepter.workload_dns]
 }
 
 # RT-3: Firewall subnet → NAT GW
@@ -90,6 +88,12 @@ resource "aws_route" "public_return_workload" {
   vpc_endpoint_id        = local.anf_endpoint_id
 }
 
+resource "aws_route" "public_return_direct_workload" {
+  route_table_id         = aws_route_table.public.id
+  destination_cidr_block = var.direct_workload_subnet_cidr
+  vpc_endpoint_id        = local.anf_endpoint_id
+}
+
 resource "aws_route" "public_return_proxy" {
   route_table_id         = aws_route_table.public.id
   destination_cidr_block = var.proxy_subnet_cidr
@@ -99,13 +103,4 @@ resource "aws_route" "public_return_proxy" {
 resource "aws_route_table_association" "public" {
   subnet_id      = aws_subnet.public.id
   route_table_id = aws_route_table.public.id
-}
-
-resource "aws_route" "dns_to_workload_vpc" {
-  count                     = local.dns_enabled
-  route_table_id            = aws_route_table.dns_private[0].id
-  destination_cidr_block    = var.vpc_cidr
-  vpc_peering_connection_id = aws_vpc_peering_connection.workload_dns[0].id
-
-  depends_on = [aws_vpc_peering_connection_accepter.workload_dns]
 }
