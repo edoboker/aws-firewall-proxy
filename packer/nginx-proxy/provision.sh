@@ -46,6 +46,7 @@ run_quiet "Installing build and runtime packages" /var/log/proxy-dnf-install.log
   findutils \
   diffutils \
   iptables-services \
+  logrotate \
   amazon-cloudwatch-agent
 
 if ! id nginx >/dev/null 2>&1; then
@@ -57,6 +58,7 @@ fi
 mkdir -p \
   /etc/nginx/conf.d \
   /etc/nginx/lua \
+  /etc/logrotate.d \
   /etc/systemd/system/aws-appconfig-agent.service.d \
   /usr/local/openresty/nginx/modules \
   /usr/local/src \
@@ -143,6 +145,7 @@ install -m 0644 "${ASSET_ROOT}/systemd/refresh-proxy-runtime-policy.timer" /etc/
 install -m 0644 "${ASSET_ROOT}/systemd/aws-appconfig-agent.override.conf" /etc/systemd/system/aws-appconfig-agent.service.d/override.conf
 install -m 0644 "${ASSET_ROOT}/systemd/nginx.service" /etc/systemd/system/nginx.service
 install -m 0644 "${ASSET_ROOT}/systemd/render-cloudwatch-agent-config.service" /etc/systemd/system/render-cloudwatch-agent-config.service
+install -m 0644 "${ASSET_ROOT}/logrotate/aws-firewall-proxy" /etc/logrotate.d/aws-firewall-proxy
 install -m 0644 "${ASSET_ROOT}/cloudwatch/amazon-cloudwatch-agent.json" \
   /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json.template
 

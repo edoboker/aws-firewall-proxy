@@ -75,22 +75,27 @@ output "anf_endpoint_id" {
   value       = local.anf_endpoint_id
 }
 
-output "lambda_ip_fallback_prefix_list_id" {
+output "ruleset_generator_prefix_list_id" {
   description = "First managed prefix list updated by the parallel ruleset-generator Lambda; null unless enabled"
-  value       = var.enable_lambda_ip_fallback ? aws_ec2_managed_prefix_list.lambda_ip_fallback[0].id : null
+  value       = var.enable_ruleset_generator ? values(aws_ec2_managed_prefix_list.ruleset_generator)[0].id : null
 }
 
-output "lambda_ip_fallback_prefix_list_ids" {
+output "ruleset_generator_prefix_list_ids" {
   description = "All managed prefix lists updated by the parallel ruleset-generator Lambda; empty unless enabled"
-  value       = var.enable_lambda_ip_fallback ? aws_ec2_managed_prefix_list.lambda_ip_fallback[*].id : []
+  value       = var.enable_ruleset_generator ? [for prefix_list in values(aws_ec2_managed_prefix_list.ruleset_generator) : prefix_list.id] : []
 }
 
-output "lambda_ip_fallback_rule_group_arn" {
+output "ruleset_generator_prefix_list_ids_by_fqdn" {
+  description = "Managed prefix list IDs by exact ruleset-generator FQDN; empty unless enabled"
+  value       = var.enable_ruleset_generator ? { for fqdn, prefix_list in aws_ec2_managed_prefix_list.ruleset_generator : fqdn => prefix_list.id } : {}
+}
+
+output "ruleset_generator_rule_group_arn" {
   description = "Network Firewall rule group ARN for the parallel ruleset-generator path; null unless enabled"
-  value       = var.enable_lambda_ip_fallback ? aws_networkfirewall_rule_group.lambda_ip_fallback[0].arn : null
+  value       = var.enable_ruleset_generator ? aws_networkfirewall_rule_group.ruleset_generator[0].arn : null
 }
 
-output "lambda_ip_fallback_function_name" {
+output "ruleset_generator_function_name" {
   description = "Parallel ruleset-generator Lambda function name; null unless enabled"
-  value       = var.enable_lambda_ip_fallback ? aws_lambda_function.lambda_ip_fallback[0].function_name : null
+  value       = var.enable_ruleset_generator ? aws_lambda_function.ruleset_generator[0].function_name : null
 }

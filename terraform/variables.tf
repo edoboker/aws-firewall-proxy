@@ -121,53 +121,42 @@ variable "proxy_metrics_publish_interval_seconds" {
   }
 }
 
-variable "enable_lambda_ip_fallback" {
+variable "enable_ruleset_generator" {
   description = "Provision the experimental parallel ruleset-generator resources in the main stack and attach their IP-set-backed TLS rule group to the main firewall policy."
   type        = bool
   default     = false
 }
 
-variable "lambda_ip_fallback_fqdns" {
+variable "ruleset_generator_fqdns" {
   description = "Exact FQDNs resolved by the parallel ruleset-generator MVP."
   type        = list(string)
   default     = ["login.microsoftonline.com", "wiz.io"]
 }
 
-variable "lambda_ip_fallback_max_addresses_per_fqdn" {
+variable "ruleset_generator_max_addresses_per_fqdn" {
   description = "Maximum number of IPv4 addresses to publish for each ruleset-generator FQDN."
   type        = number
   default     = 16
 
   validation {
-    condition     = var.lambda_ip_fallback_max_addresses_per_fqdn >= 1 && var.lambda_ip_fallback_max_addresses_per_fqdn <= 64
-    error_message = "lambda_ip_fallback_max_addresses_per_fqdn must be between 1 and 64."
+    condition     = var.ruleset_generator_max_addresses_per_fqdn >= 1 && var.ruleset_generator_max_addresses_per_fqdn <= 64
+    error_message = "ruleset_generator_max_addresses_per_fqdn must be between 1 and 64."
   }
 }
 
-variable "lambda_ip_fallback_prefix_list_max_entries" {
-  description = "Maximum entries per ruleset-generator managed prefix list. Additional prefix lists are created when the FQDN/address cap exceeds this value."
-  type        = number
-  default     = 1000
-
-  validation {
-    condition     = var.lambda_ip_fallback_prefix_list_max_entries >= 1 && var.lambda_ip_fallback_prefix_list_max_entries <= 1000
-    error_message = "lambda_ip_fallback_prefix_list_max_entries must be between 1 and 1000."
-  }
-}
-
-variable "lambda_ip_fallback_timeout_seconds" {
+variable "ruleset_generator_timeout_seconds" {
   description = "Timeout for the parallel ruleset-generator Lambda."
   type        = number
   default     = 30
 }
 
-variable "enable_lambda_ip_fallback_schedule" {
+variable "enable_ruleset_generator_schedule" {
   description = "Create an EventBridge schedule for the parallel ruleset-generator Lambda. The Lambda can still be invoked manually when false."
   type        = bool
   default     = false
 }
 
-variable "lambda_ip_fallback_schedule_expression" {
+variable "ruleset_generator_schedule_expression" {
   description = "EventBridge schedule expression for the parallel ruleset-generator Lambda when scheduling is enabled."
   type        = string
   default     = "rate(5 minutes)"

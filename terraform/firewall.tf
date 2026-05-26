@@ -11,7 +11,7 @@ resource "aws_cloudwatch_log_group" "anf_flow" {
 }
 
 locals {
-  lambda_ip_fallback_rule_group_arns = var.enable_lambda_ip_fallback ? [aws_networkfirewall_rule_group.lambda_ip_fallback[0].arn] : []
+  ruleset_generator_rule_group_arns = var.enable_ruleset_generator ? [aws_networkfirewall_rule_group.ruleset_generator[0].arn] : []
 
   public_dns_rules = join("\n", flatten([
     for idx, resolver in var.proxy_public_dns_resolvers : [
@@ -97,7 +97,7 @@ resource "aws_networkfirewall_firewall_policy" "main" {
     }
 
     dynamic "stateful_rule_group_reference" {
-      for_each = local.lambda_ip_fallback_rule_group_arns
+      for_each = local.ruleset_generator_rule_group_arns
 
       content {
         resource_arn = stateful_rule_group_reference.value

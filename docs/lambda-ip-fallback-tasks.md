@@ -1,10 +1,10 @@
-# Lambda IP fallback - MVP task list
+# Ruleset generator - MVP task list
 
-This is a parallel experimental fallback, not a primary replacement for the
-nginx/OpenResty proxy. The fallback resolves a small Terraform-owned list of
-exact FQDNs, publishes the observed IPv4 addresses into a customer-managed VPC
-prefix list, and lets AWS Network Firewall reference that prefix list through a
-separate IP-based stateful rule group.
+This is a parallel experimental path, not a primary replacement for the
+nginx/OpenResty proxy. The ruleset generator resolves a small Terraform-owned
+list of exact FQDNs, publishes the observed IPv4 addresses into
+customer-managed VPC prefix lists, and lets AWS Network Firewall reference those
+prefix lists through a separate IP-based stateful rule group.
 
 The MVP is intentionally narrow. It covers only L1-L5 from the feature plan and
 defers observability, advanced error handling, fast feedback from client errors,
@@ -21,22 +21,25 @@ parallel fan-out, scale work, benchmarks, and cost analysis.
   - the Lambda runtime's platform resolver, representing the AWS/Route 53 view
   - Cloudflare (`1.1.1.1`)
   - Google (`8.8.8.8`)
-- The Terraform feature flag defaults off: `enable_lambda_ip_fallback = false`.
+- The Terraform feature flag defaults off: `enable_ruleset_generator = false`.
 - Terraform lives in the main `terraform/` root and the main state owns the
-  Lambda, prefix list, fallback rule group, and firewall-policy attachment.
-- The fallback rule group is separate from the normal SNI/FQDN rule group, so
-  behavior stays isolated even though state ownership is unified.
+  Lambda, prefix list, rule group, and firewall-policy attachment.
+- The ruleset-generator rule group is separate from the normal SNI/FQDN rule
+  group, so behavior stays isolated even though state ownership is unified.
+- Ruleset-generator FQDNs must not also appear in `allowed_fqdns`; the broad
+  SNI-only allowlist would otherwise pass spoofed destinations before the
+  generated SNI+IP binding matters.
 
 ## Tradeoffs
 
-The fallback is attractive because it removes the nginx proxy from the datapath
-for the selected domains and turns DNS sampling into a scheduled control-plane
-update. It is also weaker than the proxy: once traffic is allowed by IP, Network
-Firewall no longer proves that the client used the expected SNI for that
-destination. CDN rotation can also make the prefix list stale between Lambda
-runs.
+The ruleset generator is attractive because it removes the nginx proxy from the
+datapath for selected domains and turns DNS sampling into a scheduled
+control-plane update. For the MVP, each generated rule requires both exact SNI
+and membership in that FQDN's generated prefix list. CDN rotation can still make
+the prefix list stale between Lambda runs, and per-FQDN prefix lists will not
+scale indefinitely.
 
-For the MVP, failures are conservative: the Lambda only modifies the prefix list
+For the MVP, failures are conservative: the Lambda only modifies prefix lists
 after a complete successful resolution pass. If resolution or publishing fails,
 the existing prefix-list entries remain in place.
 
@@ -44,18 +47,16 @@ the existing prefix-list entries remain in place.
 
 ### L1 - Design doc and isolation
 
-- Keep all work in a sibling worktree on `feature/lambda-ip-fallback`.
-- Add this document as the MVP task list and tradeoff record.
+- Keep this document as the MVP task list and tradeoff record.
 - State that subdomains, wildcard discovery, observability, scaling, benchmarks,
   and cost work are intentionally out of scope for the MVP.
 
 ### L2 - Minimal Terraform shell
 
-- Add gated Terraform variables/resources for the fallback stack.
+- Add gated Terraform variables/resources for the ruleset-generator stack.
 - Include Lambda IAM role, Lambda function package, CloudWatch log group, and an
   optional EventBridge schedule.
-- Keep all resources behind `enable_lambda_ip_fallback = false` by default.
-- Keep all resources behind `enable_lambda_ip_fallback = false` by default.
+- Keep all resources behind `enable_ruleset_generator = false` by default.
 - Do not change nginx proxy, BIND, or shared-DNS behavior.
 
 ### L3 - Resolver Lambda MVP
@@ -67,24 +68,25 @@ the existing prefix-list entries remain in place.
 
 ### L4 - Prefix-list publishing
 
-- Create one customer-managed IPv4 prefix list sized for the MVP.
+- Create customer-managed IPv4 prefix lists sized for the MVP.
 - Replace prefix-list entries with the latest complete successful result.
 - Leave existing entries untouched if any resolution or publish step fails.
 
 ### L5 - Network Firewall integration
 
-- Add a separate stateful rule group with a TLS pass rule whose destination is
-  the fallback prefix-list IP set.
+- Add a separate stateful rule group with TLS pass rules whose destinations are
+  per-FQDN ruleset-generator prefix-list IP sets and whose `tls.sni` condition
+  exactly matches that same FQDN.
 - Attach that rule group to the main firewall policy after the normal SNI/FQDN
-  rule group when `enable_lambda_ip_fallback = true`.
+  rule group when `enable_ruleset_generator = true`.
 - Do not change the existing nginx/SNI allowlist rule group semantics.
 
 ## Minimal tests
 
 - Static tests only:
-  - fallback feature defaults off
-  - fallback FQDN list contains `login.microsoftonline.com` and `wiz.io`
-  - Lambda, prefix list, and fallback Network Firewall rule group resources are gated
-  - nginx/shared-DNS resources are not required by the fallback MVP
+  - ruleset-generator feature defaults off
+  - FQDN list contains `login.microsoftonline.com` and `wiz.io`
+  - Lambda, prefix list, and Network Firewall rule group resources are gated
+  - nginx/shared-DNS resources are not required by the MVP
 
 No unit, integration, runtime, benchmark, or cost tests are part of this MVP.

@@ -18,31 +18,54 @@ PUBLIC_RESOLVERS = {
 
 def lambda_handler(event, context):
     fqdns = [fqdn.strip().lower().rstrip(".") for fqdn in json.loads(os.environ["FQDNS"])]
-    prefix_list_ids = json.loads(os.environ.get("PREFIX_LIST_IDS", "[]"))
-    if not prefix_list_ids:
-        prefix_list_ids = [os.environ["PREFIX_LIST_ID"]]
+    prefix_list_ids_by_fqdn = json.loads(os.environ["FQDN_PREFIX_LIST_IDS"])
 
-    entries = []
+    desired_entries_by_fqdn = {}
     for fqdn in fqdns:
+        if fqdn not in prefix_list_ids_by_fqdn:
+            raise RuntimeError(f"missing prefix list id for {fqdn}")
+
         ips = resolve_fqdn(fqdn)
         if not ips:
             raise RuntimeError(f"no IPv4 answers resolved for {fqdn}")
 
-        for ip in ips[:MAX_ADDRESSES_PER_FQDN]:
-            entries.append(
+        desired_entries_by_fqdn[fqdn] = dedupe_entries(
+            [
                 {
                     "Cidr": f"{ip}/32",
                     "Description": fqdn[:255],
                 }
-            )
+                for ip in ips[:MAX_ADDRESSES_PER_FQDN]
+            ]
+        )
 
-    desired_entries = dedupe_entries(entries)
-    replace_prefix_list_entries(prefix_list_ids, desired_entries)
+    replace_prefix_list_entries(prefix_list_ids_by_fqdn, desired_entries_by_fqdn)
     return {
-        "prefix_list_ids": prefix_list_ids,
-        "entry_count": len(desired_entries),
+        "prefix_list_ids_by_fqdn": prefix_list_ids_by_fqdn,
+        "entry_count_by_fqdn": {
+            fqdn: len(entries)
+            for fqdn, entries in desired_entries_by_fqdn.items()
+        },
         "fqdns": fqdns,
     }
+
+
+def replace_prefix_list_entries(prefix_list_ids_by_fqdn, desired_entries_by_fqdn):
+    ec2 = boto3.client("ec2")
+    for fqdn, desired_entries in desired_entries_by_fqdn.items():
+        prefix_list = describe_prefix_list(ec2, prefix_list_ids_by_fqdn[fqdn])
+        if len(desired_entries) > prefix_list["MaxEntries"]:
+            raise RuntimeError(
+                f"resolved {len(desired_entries)} entries for {fqdn} "
+                f"but prefix list capacity is {prefix_list['MaxEntries']}"
+            )
+        replace_one_prefix_list(ec2, prefix_list, desired_entries)
+
+
+def describe_prefix_list(ec2, prefix_list_id):
+    return ec2.describe_managed_prefix_lists(PrefixListIds=[prefix_list_id])[
+        "PrefixLists"
+    ][0]
 
 
 def resolve_fqdn(fqdn):
@@ -123,40 +146,6 @@ def dedupe_entries(entries):
     for entry in entries:
         by_cidr.setdefault(entry["Cidr"], entry)
     return [by_cidr[cidr] for cidr in sorted(by_cidr)]
-
-
-def replace_prefix_list_entries(prefix_list_ids, desired_entries):
-    ec2 = boto3.client("ec2")
-    prefix_lists = describe_prefix_lists(ec2, prefix_list_ids)
-    total_capacity = sum(prefix_list["MaxEntries"] for prefix_list in prefix_lists)
-    if len(desired_entries) > total_capacity:
-        raise RuntimeError(
-            f"resolved {len(desired_entries)} entries but prefix list capacity is {total_capacity}"
-        )
-
-    chunks = split_entries_by_capacity(desired_entries, prefix_lists)
-    for prefix_list, chunk in zip(prefix_lists, chunks):
-        replace_one_prefix_list(ec2, prefix_list, chunk)
-
-
-def describe_prefix_lists(ec2, prefix_list_ids):
-    by_id = {}
-    for prefix_list_id in prefix_list_ids:
-        prefix_list = ec2.describe_managed_prefix_lists(PrefixListIds=[prefix_list_id])[
-            "PrefixLists"
-        ][0]
-        by_id[prefix_list_id] = prefix_list
-    return [by_id[prefix_list_id] for prefix_list_id in prefix_list_ids]
-
-
-def split_entries_by_capacity(entries, prefix_lists):
-    chunks = []
-    offset = 0
-    for prefix_list in prefix_lists:
-        next_offset = offset + prefix_list["MaxEntries"]
-        chunks.append(entries[offset:next_offset])
-        offset = next_offset
-    return chunks
 
 
 def replace_one_prefix_list(ec2, prefix_list, desired_entries):

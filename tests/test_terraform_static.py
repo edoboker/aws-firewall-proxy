@@ -90,14 +90,14 @@ def test_off_path_resolver_ports_dropped():
     )
 
 
-def test_lambda_ip_fallback_rule_group_can_attach_to_firewall_policy():
+def test_ruleset_generator_rule_group_can_attach_to_firewall_policy():
     variables = _read_tf("variables.tf")
     firewall = _read_tf("firewall.tf")
-    assert 'variable "enable_lambda_ip_fallback"' in variables
-    assert "local.lambda_ip_fallback_rule_group_arns" in firewall
-    assert "aws_networkfirewall_rule_group.lambda_ip_fallback[0].arn" in firewall
+    assert 'variable "enable_ruleset_generator"' in variables
+    assert "local.ruleset_generator_rule_group_arns" in firewall
+    assert "aws_networkfirewall_rule_group.ruleset_generator[0].arn" in firewall
     assert re.search(r"priority\s*=\s*2", firewall), (
-        "fallback rule group should evaluate after the primary FQDN/SNI group"
+        "ruleset-generator rule group should evaluate after the primary FQDN/SNI group"
     )
 
 
@@ -148,27 +148,27 @@ def test_async_sni_spoofing_detector_terraform_resources():
     assert 'sni_spoofing_detector_metric_name        = "SuspectedSniSpoofing"' in detector
 
 
-def test_lambda_ip_fallback_defaults_off():
+def test_ruleset_generator_defaults_off():
     variables = _read_tf("variables.tf")
-    block = _variable_block(variables, "enable_lambda_ip_fallback")
+    block = _variable_block(variables, "enable_ruleset_generator")
     assert re.search(r"default\s*=\s*false", block)
 
 
-def test_lambda_ip_fallback_mvp_fqdns():
+def test_ruleset_generator_mvp_fqdns():
     variables = _read_tf("variables.tf")
-    block = _variable_block(variables, "lambda_ip_fallback_fqdns")
+    block = _variable_block(variables, "ruleset_generator_fqdns")
     assert "login.microsoftonline.com" in block
     assert "wiz.io" in block
 
 
-def test_lambda_ip_fallback_resources_are_gated():
-    fallback = _read_tf("lambda_ruleset_generator.tf")
+def test_ruleset_generator_resources_are_gated():
+    ruleset_generator = _read_tf("lambda_ruleset_generator.tf")
     for marker in (
-        'resource "aws_lambda_function" "lambda_ip_fallback"',
-        'resource "aws_ec2_managed_prefix_list" "lambda_ip_fallback"',
-        'resource "aws_networkfirewall_rule_group" "lambda_ip_fallback"',
+        'resource "aws_lambda_function" "ruleset_generator"',
+        'resource "aws_ec2_managed_prefix_list" "ruleset_generator"',
+        'resource "aws_networkfirewall_rule_group" "ruleset_generator"',
     ):
-        assert marker in fallback
+        assert marker in ruleset_generator
 
     for resource_name in (
         "aws_cloudwatch_log_group",
@@ -178,29 +178,37 @@ def test_lambda_ip_fallback_resources_are_gated():
         "aws_lambda_function",
         "aws_networkfirewall_rule_group",
     ):
-        pattern = rf'resource "{resource_name}" "lambda_ip_fallback" \{{(?P<body>.*?)^}}'
-        match = re.search(pattern, fallback, re.MULTILINE | re.DOTALL)
-        assert match, f"missing {resource_name}.lambda_ip_fallback"
-        assert "count" in match.group("body")
+        pattern = rf'resource "{resource_name}" "ruleset_generator" \{{(?P<body>.*?)^}}'
+        match = re.search(pattern, ruleset_generator, re.MULTILINE | re.DOTALL)
+        assert match, f"missing {resource_name}.ruleset_generator"
         assert (
-            "local.lambda_ip_fallback_enabled" in match.group("body")
-            or "local.lambda_ip_fallback_prefix_list_count" in match.group("body")
+            "count" in match.group("body")
+            or "for_each" in match.group("body")
+        )
+        assert (
+            "local.ruleset_generator_enabled" in match.group("body")
+            or "var.enable_ruleset_generator" in match.group("body")
         )
 
 
-def test_lambda_ip_fallback_does_not_require_shared_dns_or_nginx_changes():
-    fallback = _read_tf("lambda_ruleset_generator.tf")
-    assert "aws_instance.proxy" not in fallback
-    assert "aws_appconfig" not in fallback
-    assert "aws_instance.bind" not in fallback
+def test_ruleset_generator_does_not_require_shared_dns_or_nginx_changes():
+    ruleset_generator = _read_tf("lambda_ruleset_generator.tf")
+    assert "aws_instance.proxy" not in ruleset_generator
+    assert "aws_appconfig" not in ruleset_generator
+    assert "aws_instance.bind" not in ruleset_generator
 
 
-def test_lambda_ip_fallback_rule_group_uses_tls_ip_set_destination():
-    fallback = _read_tf("lambda_ruleset_generator.tf")
-    assert "local.lambda_ip_fallback_source_cidrs" in fallback
-    assert "@LAMBDA_IP_FALLBACK_TARGETS_${prefix_idx}" in fallback
-    assert "dynamic \"ip_set_references\"" in fallback
-    assert "reference_arn = aws_ec2_managed_prefix_list.lambda_ip_fallback[ip_set_references.value].arn" in fallback
+def test_ruleset_generator_rule_group_uses_tls_ip_set_destination():
+    ruleset_generator = _read_tf("lambda_ruleset_generator.tf")
+    assert "local.ruleset_generator_source_cidrs" in ruleset_generator
+    assert 'tls.sni; content:\\"${fqdn}\\"; startswith; endswith; nocase' in ruleset_generator
+    assert "@${local.ruleset_generator_ip_set_keys[fqdn]}" in ruleset_generator
+    assert "dynamic \"ip_set_references\"" in ruleset_generator
+    assert "for_each = aws_ec2_managed_prefix_list.ruleset_generator" in ruleset_generator
+    assert "key = local.ruleset_generator_ip_set_keys[ip_set_references.key]" in ruleset_generator
+    assert "reference_arn = ip_set_references.value.arn" in ruleset_generator
+    assert "ruleset_generator_fqdn_allowlist_overlap" in ruleset_generator
+    assert "ruleset_generator_fqdns must not overlap allowed_fqdns" in ruleset_generator
 
 
 def test_direct_workload_bypasses_nginx_and_routes_through_firewall():

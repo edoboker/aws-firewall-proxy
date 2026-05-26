@@ -37,12 +37,12 @@ proxy_enforcement_mode    = "strict"
 # publishes them onward to CloudWatch.
 proxy_metrics_publish_interval_seconds = 20
 
-# Experimental Lambda IP fallback. When enabled, the main stack creates the
+# Experimental ruleset generator. When enabled, the main stack creates the
 # resolver Lambda, managed prefix list, separate IP-set-backed stateful rule
 # group, and attaches that rule group to the firewall policy.
-enable_lambda_ip_fallback          = false
-enable_lambda_ip_fallback_schedule = false
-lambda_ip_fallback_fqdns = [
+enable_ruleset_generator          = false
+enable_ruleset_generator_schedule = false
+ruleset_generator_fqdns = [
   "login.microsoftonline.com",
   "wiz.io",
   "amazon.com",
