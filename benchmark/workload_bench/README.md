@@ -1,8 +1,9 @@
-# benchmark
+# workload_bench
 
-Measures the added latency introduced by the transparent SNI proxy and the
-max sustained RPS the current single-AZ nginx proxy can serve for an allowed
-HTTPS FQDN.
+Sweeps increasing load against the transparent SNI nginx proxy and shows how
+its throughput and latency hold up as concurrency grows. For each concurrency
+step it runs `hey` against an allowed HTTPS FQDN and records requests/sec and
+p50/p95/p99 latency, then plots the sweep.
 
 ## Scope
 
@@ -14,24 +15,25 @@ Each run holds the following constant by default:
 
 - 1 target FQDN, 1 AZ, 1 proxy instance, 1 client instance
 - HEAD requests only
-- 5 s latency probe at c=2, plus 5 s max-RPS run at c=50
-- Estimated data through ANF+NAT stays well under ~200 MB per run, which keeps data-processing charges around a few cents
+- 5 s per step, concurrency swept over 25, 50, 100, 200, 400, 800
+- Estimated data through ANF+NAT stays well under a dollar per run (the script
+  prints the estimate)
 
 A production-grade benchmark would expand every one of those dimensions
 (longer durations, multiple AZs, multiple FQDNs, mixed payload sizes, and a
-hot/cold cache split). That work is intentionally deferred in this repo to
-keep the benchmark cheap to run.
+hot/cold cache split). That work is intentionally deferred in this repo to keep
+the benchmark cheap to run.
 
 ## What it measures
 
-Two scenarios run back to back against the same target:
+The path is always `workload -> nginx proxy -> ANF -> NAT -> internet`. The only
+variable that changes between steps is concurrency (`hey -c`), with the duration
+fixed, so each step pushes more concurrent requests and more total traffic than
+the last. For every step the script records:
 
-1. `proxy`: workload -> nginx proxy -> ANF -> NAT -> internet
-2. `baseline`: workload -> ANF -> NAT -> internet
-
-The script reports `added_latency = proxy.latency - baseline.latency` at
-p50/p95/p99 and also records the high-concurrency RPS numbers for each
-scenario.
+- `rps` — sustained requests/sec
+- `p50_ms`, `p95_ms`, `p99_ms` — latency percentiles
+- `total_requests`
 
 ## How it works
 
@@ -39,18 +41,17 @@ scenario.
 
 1. Loads `terraform output -json` via the shared helper in `common/`.
 2. Verifies that `hey` is already baked into the workload AMI.
-3. Runs `hey -m HEAD -z ... -c ...` on the workload through SSM Run Command.
-4. Swaps the workload default route from the proxy ENI to the ANF VPC endpoint.
-5. Polls `describe-route-tables` until the route change is visible.
-6. Reruns `hey` for the no-proxy baseline.
-7. Restores the route to the proxy ENI in a `try/finally`.
-8. Writes `results/<UTC-timestamp>/raw.json` and `summary.md` in UTF-8.
+3. For each concurrency step, runs `hey -m HEAD -z <duration>s -c <step>` on the
+   workload through SSM Run Command and parses the result.
+4. Writes `results/<UTC-timestamp>/{raw.json,summary.md,load.png}` in UTF-8.
+
+No route swapping is involved — the proxy stays in path throughout.
 
 ## Prerequisites
 
-- `terraform apply` in `../terraform/` has succeeded, and the workload
-  instance is running the workload golden AMI with `hey` baked in. Build
-  that AMI once:
+- `terraform apply` in `../../terraform/` has succeeded, and the workload
+  instance is running the workload golden AMI with `hey` baked in. Build that
+  AMI once:
   ```bash
   cd packer/workload
   packer init .
@@ -58,61 +59,39 @@ scenario.
   cd ../../terraform
   terraform apply
   ```
-- AWS credentials with `ssm:SendCommand`, `ssm:GetCommandInvocation`,
-  `ec2:DescribeRouteTables`, and `ec2:ReplaceRoute`.
-- Python deps from the repo root: `pip install -e .` (installs `boto3`,
-  `PyYAML`, and the shared `common` package).
-
-## YAML config
-
-`run.py` accepts an optional UTF-8 YAML file for benchmark knobs and target
-selection. Start from the example:
-
-```bash
-cp benchmark/workload_bench/config.example.yaml benchmark/workload_bench/config.yaml
-```
-
-Supported keys:
-
-- `fqdn`
-- `results_dir`
-- `latency.duration_s`
-- `latency.concurrency`
-- `rps.duration_s`
-- `rps.concurrency`
-- `route_swap.timeout_s`
-- `route_swap.poll_interval_s`
-
-CLI flags override YAML values. If `results_dir` is relative in the YAML file,
-it is resolved relative to the YAML file's directory.
+- AWS credentials with `ssm:SendCommand` and `ssm:GetCommandInvocation`.
+- Python deps from the repo root: `pip install -e .` (installs `boto3` and the
+  shared `common` package), plus `matplotlib` for the plot
+  (`pip install -e ".[benchmark]"`). Without matplotlib the run still writes
+  `raw.json` and `summary.md`, just no PNG.
 
 ## Run
 
 ```bash
 python benchmark/workload_bench/run.py
-python benchmark/workload_bench/run.py --config benchmark/workload_bench/config.yaml
-python benchmark/workload_bench/run.py --config benchmark/workload_bench/config.yaml --fqdn google.com --results-dir ./out
+python benchmark/workload_bench/run.py --steps 10,50,100 --duration 10
+python benchmark/workload_bench/run.py --fqdn google.com --results-dir ./out
 ```
 
-Results land in `benchmark/workload_bench/results/<UTC-timestamp>/{raw.json,summary.md}` by
-default.
+Flags:
 
-## Recovery
+- `--steps` — comma-separated concurrency levels to sweep (default
+  `25,50,100,200,400,800`).
+- `--duration` — seconds `hey` runs per step (default `5`).
+- `--fqdn` — target FQDN; must be in `allowed_fqdns`. Defaults to the first
+  allowed FQDN from the terraform outputs.
+- `--results-dir` — where to write `results/<UTC-timestamp>/`.
 
-The `try/finally` should restore the route automatically. If the process is
-killed between the swap and the restore, recover manually:
+## Outputs
 
-```bash
-aws ec2 replace-route \
-  --region "$(terraform -chdir=terraform output -raw aws_region)" \
-  --route-table-id "$(terraform -chdir=terraform output -raw workload_route_table_id)" \
-  --destination-cidr-block 0.0.0.0/0 \
-  --network-interface-id "$(terraform -chdir=terraform output -raw proxy_eni_id)"
-```
+Results land in `benchmark/workload_bench/results/<UTC-timestamp>/`:
+
+- `raw.json` — per-step rps, latency percentiles, request counts, cost estimate
+- `summary.md` — table of concurrency vs rps/latency
+- `load.png` — throughput and p50/p95/p99 latency vs concurrency
 
 ## Files
 
 - `run.py`: orchestrator
-- `config.example.yaml`: sample config for benchmark knobs
 - `results/.gitignore`: ignores generated benchmark runs
-- `results/sample/summary.md`: small example of the report format
+- `results/sample/`: small example of the report format (`summary.md` + `load.png`)

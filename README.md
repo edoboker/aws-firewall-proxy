@@ -204,9 +204,8 @@ firewall allowlist can bypass the generated SNI+IP binding.
 ### 7. Benchmarks
 
 ```bash
-cp benchmark/workload_bench/config.example.yaml benchmark/workload_bench/config.yaml
-python benchmark/workload_bench/run.py --config benchmark/workload_bench/config.yaml
-python benchmark/workload_bench/run.py --config benchmark/workload_bench/config.yaml --fqdn google.com
+python benchmark/workload_bench/run.py
+python benchmark/workload_bench/run.py --steps 10,50,100 --duration 10 --fqdn google.com
 ```
 
 See `benchmark/workload_bench/README.md` and `benchmark/lambda_bench/README.md`

@@ -31,8 +31,9 @@ from common.tf_outputs import load as load_tf_outputs
 RESULTS_DIR = Path(__file__).resolve().parent / "results"
 
 # Concurrency steps swept in order, smallest to largest. Duration is fixed so
-# the only growing dimension is the number of concurrent clients.
-DEFAULT_STEPS = [5, 10, 25, 50, 100, 200]
+# the only growing dimension is the number of concurrent clients. The ceiling
+# is deliberately high to push the single-AZ proxy toward saturation.
+DEFAULT_STEPS = [25, 50, 100, 200, 400, 800]
 DEFAULT_DURATION_S = 5
 
 # Per-GB data-processing prices used to estimate the run's $ cost. Rough public
@@ -233,7 +234,7 @@ def main() -> int:
         "--steps",
         type=parse_steps,
         default=DEFAULT_STEPS,
-        help="Comma-separated concurrency levels to sweep (default: 5,10,25,50,100,200).",
+        help="Comma-separated concurrency levels to sweep (default: 25,50,100,200,400,800).",
     )
     parser.add_argument(
         "--duration",
