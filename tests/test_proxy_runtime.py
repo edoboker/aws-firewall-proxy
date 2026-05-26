@@ -2,7 +2,8 @@
 
 Proves the deployed proxy instance has the full transparent-proxy wiring in
 place: valid nginx config, the iptables REDIRECT that captures :443, and the
-Lua/C-module guard loaded. Requires a deployed stack reachable via SSM.
+ssl_preread/C-module override path loaded. Requires a deployed stack reachable
+via SSM.
 """
 
 from common.ssm import ssm_exec
@@ -31,7 +32,7 @@ def test_iptables_redirect_present(outputs, aws_region):
     )
 
 
-def test_effective_config_wires_guard(outputs, aws_region):
+def test_effective_config_wires_tls_override_path(outputs, aws_region):
     # `nginx -T` dumps the full effective config, including the AppConfig-rendered
     # includes, so this checks the live wiring rather than the AMI template.
     result = ssm_exec(
@@ -43,8 +44,9 @@ def test_effective_config_wires_guard(outputs, aws_region):
     assert result.exit_code == 0, f"nginx -T failed: {result!r}"
     cfg = result.stdout
     for needle in (
-        "preread_by_lua_file",
-        "check_sni.lua",
+        "ssl_preread on;",
+        "proxy_pass $ssl_preread_server_name:443;",
         "ngx_stream_original_dst_module.so",
+        "override_observations.log",
     ):
         assert needle in cfg, f"effective config does not reference {needle!r}"

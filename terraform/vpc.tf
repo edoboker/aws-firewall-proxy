@@ -14,6 +14,13 @@ resource "aws_subnet" "workload" {
   tags              = { Name = "${local.name}-workload" }
 }
 
+resource "aws_subnet" "direct_workload" {
+  vpc_id            = aws_vpc.main.id
+  cidr_block        = var.direct_workload_subnet_cidr
+  availability_zone = var.availability_zone
+  tags              = { Name = "${local.name}-direct-workload" }
+}
+
 resource "aws_subnet" "proxy" {
   vpc_id            = aws_vpc.main.id
   cidr_block        = var.proxy_subnet_cidr

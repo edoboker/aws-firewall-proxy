@@ -20,6 +20,14 @@ resource "aws_security_group" "eic_endpoint" {
     protocol    = "tcp"
     cidr_blocks = [var.workload_subnet_cidr]
   }
+
+  egress {
+    description = "SSH to direct workload EC2"
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = [var.direct_workload_subnet_cidr]
+  }
 }
 
 resource "aws_ec2_instance_connect_endpoint" "proxy" {
@@ -42,6 +50,14 @@ resource "aws_security_group" "proxy" {
     description = "TLS from workload subnet"
     from_port   = 443
     to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = [var.workload_subnet_cidr]
+  }
+
+  ingress {
+    description = "HTTP from workload subnet (experimental Host/original-dst guard)"
+    from_port   = 80
+    to_port     = 80
     protocol    = "tcp"
     cidr_blocks = [var.workload_subnet_cidr]
   }

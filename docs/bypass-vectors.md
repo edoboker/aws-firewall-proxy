@@ -1,33 +1,56 @@
-# Bypass vectors — protocols where SNI inspection cannot apply
+# Bypass vectors
 
-This document enumerates protocols and TLS features where the proxy fundamentally cannot enforce its core guarantee (resolve SNI → verify destination IP).
+This document enumerates protocols and TLS features where SNI-based override
+forwarding and async spoofing detection have hard limits.
 
-**Policy across all of these: block, not bypass.** We do not attempt to "support" them — we configure the egress path so they cannot traverse it.
-
-This is consistent with how major cloud security providers describe their own FQDN-rule firewalls. AWS Network Firewall, GCP Cloud NGFW, and Azure Firewall all explicitly document that FQDN-based filtering does **not** apply to QUIC or to traffic with encrypted SNI. We follow the same boundary.
+The current TLS path is prevention-first: nginx reads SNI with `ssl_preread` and
+forwards to `$ssl_preread_server_name:443`, ignoring the client's original
+destination IP. The async detector later compares `{SNI, original_dst}` against
+current DNS answers. That later comparison is probabilistic and does not block.
 
 ## 1. QUIC / HTTP/3 (UDP/443)
 
-QUIC runs over UDP and is not redirected by the proxy's TCP-only iptables rule. The TLS 1.3 ClientHello inside QUIC requires protocol-aware parsing that an SNI-peek TCP proxy does not perform.
+QUIC runs over UDP and is not redirected by the proxy's TCP-only iptables rule.
+The TLS 1.3 ClientHello inside QUIC requires protocol-aware parsing that this
+TCP stream proxy does not perform.
 
-**Mitigation:** block UDP/443 (and UDP/80) at AWS Network Firewall. Modern clients fall back to TCP-based HTTPS when QUIC is unreachable.
+**Mitigation:** block UDP/443 and UDP/80 at AWS Network Firewall. Modern clients
+fall back to TCP-based HTTPS when QUIC is unreachable.
 
-## 2. Encrypted ClientHello (ECH / formerly ESNI)
+## 2. Encrypted ClientHello
 
-ECH encrypts the SNI under the server's HPKE public key (advertised via DNS HTTPS records). `ssl_preread` and Envoy's `tls_inspector` see only the outer ClientHello, whose outer SNI is a meaningless decoy for FQDN enforcement.
+ECH encrypts the real SNI. `ssl_preread` sees only the outer ClientHello, whose
+outer SNI may be a decoy.
 
-**Mitigation:** block traffic whose outer SNI is not on the allowlist. When the outer SNI happens to be allowlisted, we lose visibility into the real inner destination — the same boundary every SNI-based firewall in the industry hits.
+**Mitigation:** treat ECH as a known SNI-firewall boundary. The proxy can only
+route by the visible outer SNI; the async detector can only evaluate that same
+visible SNI against the original destination.
 
-Tracked separately in `production-grade-plan.md` §6.
+## 3. TLS session resumption without SNI
 
-## 3. TLS 1.3 session resumption without SNI
+Some TLS resumption paths can omit `server_name`. With no SNI, nginx has no
+hostname for `$ssl_preread_server_name:443`, so the override proxy cannot form a
+valid upstream.
 
-PSK-only resumption in TLS 1.3 permits the ClientHello to omit `server_name`. With no SNI, the proxy has no hostname to resolve.
-
-**Mitigation:** reject (TCP RST / connection close). The client falls back to a full handshake on retry, at which point SNI is present and inspection proceeds normally.
+**Mitigation:** the connection fails closed at the proxy. Clients usually retry
+with a full handshake that includes SNI.
 
 ## 4. Non-HTTPS TCP protocols carrying no FQDN
 
-Raw TCP, gRPC over h2c without a higher-layer name binding, custom binary protocols. There is no field the proxy can bind a hostname to.
+Raw TCP, gRPC over h2c without a higher-layer name binding, and custom binary
+protocols have no hostname field the proxy can route by.
 
-**Mitigation:** block by default at ANF (allowlist is TLS over TCP/443 only). See `production-grade-plan.md` §20 for the explicit non-goal statement.
+**Mitigation:** block by default at AWS Network Firewall. The override proxy is
+for TLS over TCP/443.
+
+## 5. Off-path DNS resolvers
+
+The proxy no longer depends on matching the client's DNS answer for prevention,
+because forwarding is based on proxy-side SNI resolution. Off-path DNS still
+matters for detection quality: if a workload used a different resolver, the
+original destination IP may not appear in the detector's later DNS answer set.
+
+**Mitigation:** keep DoT (TCP/853) and DoQ (UDP/853) blocked at AWS Network
+Firewall. DoH (HTTPS/443) must be controlled by the normal egress/FQDN policy;
+do not intentionally allow public DoH endpoints unless that is an accepted
+policy choice.

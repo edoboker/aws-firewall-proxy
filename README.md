@@ -1,16 +1,28 @@
 # aws-firewall-proxy
 
-Transparent forward proxy that closes the SNI spoofing gap in AWS Network Firewall.
+Transparent forward proxy that prevents SNI-spoofed egress by overriding the
+actual upstream destination, then detects suspicious original destinations
+asynchronously.
 
-AWS Network Firewall FQDN rules inspect the TLS SNI value, but they do not verify that the client is actually connecting to an IP that belongs to that hostname. A client can claim an allowed SNI while routing traffic to a different IP. This project inserts a DNS-aware transparent proxy into the VPC egress path so the proxy can:
+AWS Network Firewall FQDN rules inspect the TLS SNI value, but they do not
+verify that the client is actually connecting to an IP that belongs to that
+hostname. A client can claim an allowed SNI while routing traffic to a different
+IP. This project inserts a transparent proxy into the VPC egress path so the
+proxy can:
 
 - recover the original destination IP before NAT
-- parse the ClientHello itself
-- enforce an on-host SNI allowlist
-- resolve the claimed SNI
-- drop the connection if the original destination IP is not in the resolved set
+- read the ClientHello SNI with nginx `ssl_preread`
+- ignore the original destination for forwarding
+- connect upstream to the proxy-resolved SNI host
+- emit structured `{SNI, original_dst}` observations
+- detect suspected SNI spoofing asynchronously in Lambda
 
-Important production caveat: the DNS-to-original-destination comparison is probabilistic for large, geo-distributed, CDN-backed services. A client and the proxy may query at different times, through different recursive resolvers, and legitimately receive different A-record subsets for the same SNI. This project can reduce the false-positive rate by querying multiple resolvers multiple times and unioning the results, but it cannot prove that it has every IP the client might have received.
+Important production caveat: prevention and detection are separate. The proxy
+prevents the original spoofed destination from being contacted because it always
+forwards to `$ssl_preread_server_name:443`. The later DNS-to-original-destination
+comparison is probabilistic for large, geo-distributed, CDN-backed services and
+can false-positive. Detection is a signal, not proof, and it does not block
+traffic.
 
 ## Architecture
 
@@ -20,7 +32,8 @@ Workload EC2  -->  nginx proxy EC2  -->  AWS Network Firewall  -->  NAT GW  --> 
 ```
 
 - **Workload subnet** - client EC2 instance; default route points to the proxy ENI.
-- **Proxy subnet** - transparent OpenResty intercepts TLS via iptables REDIRECT, recovers `SO_ORIGINAL_DST` via a custom C stream module, parses ClientHello in Lua, resolves the SNI through the configured resolver set, and drops spoofed connections. The host enforces a first-layer SNI allowlist from an AppConfig-backed runtime policy.
+- **Proxy subnet** - transparent OpenResty intercepts TLS via iptables REDIRECT, recovers `SO_ORIGINAL_DST` via a custom C stream module, reads SNI with `ssl_preread`, and forwards to `$ssl_preread_server_name:443` rather than the original destination IP. A compact JSON observation log is shipped to CloudWatch Logs.
+- **Async detector** - CloudWatch Logs invokes a Lambda for override observations. The Lambda resolves the SNI, compares the original destination IP with current A records, logs suspected spoofing alerts, and publishes the `AwsFirewallProxy/SuspectedSniSpoofing` metric.
 - **Firewall subnet** - AWS Network Firewall applies an independent FQDN allowlist using Suricata `dotprefix` rules.
 - **Public subnet** - NAT Gateway for internet egress.
 
@@ -72,7 +85,7 @@ packer build \
   .
 ```
 
-This builds an AL2023-based AMI with OpenResty, the original-dst C module, the Lua preread guard, AWS AppConfig Agent, the runtime policy sync service, iptables-services, awscli v2, and CloudWatch agent config baked in. Mutable proxy policy is no longer baked into the AMI.
+This builds an AL2023-based AMI with OpenResty, the original-dst C module, nginx `ssl_preread` SNI routing, AWS AppConfig Agent, the runtime policy sync service, iptables-services, awscli v2, and CloudWatch agent config baked in. Mutable proxy policy is no longer baked into the AMI.
 
 #### 1c. Build the workload AMI
 
@@ -138,13 +151,13 @@ Connect to the workload EC2 via EC2 Instance Connect or use SSM Run Command, the
 curl -v https://google.com --max-time 10
 # Expected: succeeds
 
-# Spoofed destination
+# Spoofed original destination
 curl -v --resolve google.com:443:1.1.1.1 https://google.com --max-time 10
-# Expected: connection reset / failure because the proxy detects SNI spoofing
+# Expected: proxy forwards to google.com:443, not 1.1.1.1; async detector may later alert
 
 # Blocked domain
 curl -v https://example.com --max-time 10
-# Expected: connection reset / failure because the on-host allowlist denies it
+# Expected: depends on downstream firewall/DNS policy; TLS override proxy no longer enforces an on-host SNI allowlist
 ```
 
 ### 5. Change proxy runtime policy
@@ -187,10 +200,12 @@ Terraform does not deregister the Packer-built AMIs; remove them manually if you
 
 ## Debugging
 
-Observability is tuned for a small CloudWatch footprint, so two verbose signals
-are **off by default** and toggled at the nginx level — no infrastructure change
-needed, because the log group and CloudWatch agent collection are already
-provisioned (see `docs/observability.md`).
+Observability is tuned for a small CloudWatch footprint. Override observations
+are always written as compact JSON to
+`/var/log/nginx/override_observations.log` and shipped to
+`/aws/firewall-proxy/nginx/override-observations`. The CloudWatch log stream
+name is the EC2 instance ID, so the async detector can include that context in
+alert logs without adding instance metadata to the nginx JSON body.
 
 Operational dashboards no longer depend only on log-derived metrics. The proxy
 publishes aggregated metrics directly to the local CloudWatch agent every
@@ -212,32 +227,31 @@ Lines flow to the `/aws/firewall-proxy/nginx/access` group within ~a minute. The
 resolved IPs — useful for inspecting *allowed* traffic, which the sparse event
 logs intentionally omit.
 
-**Verbose Lua diagnostics.** Set `PROXY_DEBUG=1` in
+**Verbose Lua diagnostics for HTTP.** Set `PROXY_DEBUG=1` in
 `/etc/sysconfig/aws-firewall-proxy-runtime` and restart nginx to emit
-step-by-step `lua="sni-guard"` NOTICE lines (ClientHello parse details, DNS
-resolution, allow/deny reasoning) to `error.log`.
+step-by-step HTTP guard NOTICE lines to `error.log`. The TLS override path does
+not use Lua.
 
 ## Key design decisions
 
 - **`source_dest_check = false`** on the proxy ENI - required for transparent proxying.
 - **iptables `PREROUTING` REDIRECT** - steers inbound port 443 to the proxy listener on 8443 without client-side configuration.
 - **Custom C module for `SO_ORIGINAL_DST`** - surfaces the pre-NAT destination IP to nginx/OpenResty.
-- **Lua preread policy** - parses ClientHello directly, enforces the allowlist, resolves DNS, and logs spoofing detections.
+- **nginx `ssl_preread` SNI routing** - reads ClientHello SNI without terminating TLS and forwards to `$ssl_preread_server_name:443`.
 - **AppConfig-backed runtime policy** - allowlist, DNS fanout, and enforcement mode are deployed as one runtime document and rendered locally on the proxy.
-- **Configurable DNS fanout** - the proxy can query multiple resolvers repeatedly for each SNI, then union the returned A records before deciding.
+- **Async spoofing detector** - evaluates `{SNI, original_dst}` observations after the fact and emits a non-blocking metric/alarm signal.
 - **Golden AMI via Packer** - avoids boot-time package drift and keeps the proxy runtime reproducible.
-- **Two independent allowlists (nginx + ANF)** - defense in depth; either layer can deny.
+- **Forwarding override before detection** - prevention comes from ignoring the client-selected destination IP for upstream connection setup.
 
 ## DNS Matching Caveat
 
-The SNI/original-dst check asks: "does the destination IP appear in the DNS answers we can observe for this SNI?" That is useful, but it is not a perfect truth oracle.
+The async SNI/original-dst check asks: "does the original destination IP appear
+in the DNS answers we can observe for this SNI right now?" That is useful, but
+it is not a perfect truth oracle.
 
 For names such as `google.com`, repeated `nslookup google.com 8.8.8.8` calls may return one different IP each time. Other names, such as `login.microsoftonline.com`, may return 10 or more addresses in a single response. Both behaviors are normal. Large providers use recursive resolver location, cache state, TTLs, load balancing, and CDN edge selection to vary answers.
 
-Production implication: strict dropping on DNS mismatch can false-positive for high-scale CDN-style domains. The project therefore makes the resolver list, query count, and enforcement mode explicit Terraform-managed runtime policy:
-
-- `proxy_public_dns_resolvers`
-- `proxy_dns_queries_per_sni`
-- `proxy_enforcement_mode`
-
-The demo policy uses Route 53 Resolver plus `1.1.1.1` and `8.8.8.8`, with three queries per resolver. This improves coverage, but it still does not guarantee completeness. For production workloads, treat the DNS comparison as a high-confidence signal whose enforcement mode should be chosen per risk appetite and domain behavior.
+Production implication: suspected spoofing alerts can false-positive for
+high-scale CDN-style domains. In this architecture, those alerts do not block
+traffic. Treat the DNS comparison as a useful investigation signal whose
+confidence depends on domain behavior, resolver choice, cache state, and timing.

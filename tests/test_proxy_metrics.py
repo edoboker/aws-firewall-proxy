@@ -1,7 +1,13 @@
 from __future__ import annotations
 
+import pytest
+
 from common.cloudwatch import metric_sum, wait_for_metric_delta
 from common.ssm import ssm_exec
+
+pytestmark = pytest.mark.skip(
+    reason="live proxy metrics coverage is deferred while TLS path no longer uses Lua metrics"
+)
 
 
 def _baseline_fqdn(outputs: dict) -> str:

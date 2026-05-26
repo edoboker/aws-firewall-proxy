@@ -28,6 +28,12 @@ variable "workload_subnet_cidr" {
   default     = "10.0.1.0/24"
 }
 
+variable "direct_workload_subnet_cidr" {
+  description = "CIDR block for the no-proxy workload subnet that routes directly through AWS Network Firewall"
+  type        = string
+  default     = "10.0.5.0/24"
+}
+
 variable "proxy_subnet_cidr" {
   description = "CIDR block for the proxy subnet"
   type        = string
@@ -62,6 +68,12 @@ variable "allowed_fqdns" {
   description = "FQDNs allowed through the network firewall (matched with dotprefix for subdomain safety)"
   type        = list(string)
   default     = ["google.com", "amazonaws.com", "cdn.amazonlinux.com"]
+}
+
+variable "enable_dns_firewall" {
+  description = "Associate the Route 53 Resolver DNS Firewall rule group with the workload VPC. Disable temporarily when debugging resolver forwarding or CNAME behavior; the firewall lists/rules remain managed."
+  type        = bool
+  default     = true
 }
 
 variable "nginx_allowed_snis" {
@@ -107,4 +119,45 @@ variable "proxy_metrics_publish_interval_seconds" {
     condition     = var.proxy_metrics_publish_interval_seconds >= 10 && var.proxy_metrics_publish_interval_seconds <= 900 && floor(var.proxy_metrics_publish_interval_seconds) == var.proxy_metrics_publish_interval_seconds
     error_message = "Proxy metrics publish interval must be an integer between 10 and 900 seconds."
   }
+}
+
+variable "enable_ruleset_generator" {
+  description = "Provision the experimental parallel ruleset-generator resources in the main stack and attach their IP-set-backed TLS rule group to the main firewall policy."
+  type        = bool
+  default     = false
+}
+
+variable "ruleset_generator_fqdns" {
+  description = "Exact FQDNs resolved by the parallel ruleset-generator MVP."
+  type        = list(string)
+  default     = ["login.microsoftonline.com", "wiz.io"]
+}
+
+variable "ruleset_generator_max_addresses_per_fqdn" {
+  description = "Maximum number of IPv4 addresses to publish for each ruleset-generator FQDN."
+  type        = number
+  default     = 16
+
+  validation {
+    condition     = var.ruleset_generator_max_addresses_per_fqdn >= 1 && var.ruleset_generator_max_addresses_per_fqdn <= 64
+    error_message = "ruleset_generator_max_addresses_per_fqdn must be between 1 and 64."
+  }
+}
+
+variable "ruleset_generator_timeout_seconds" {
+  description = "Timeout for the parallel ruleset-generator Lambda."
+  type        = number
+  default     = 30
+}
+
+variable "enable_ruleset_generator_schedule" {
+  description = "Create an EventBridge schedule for the parallel ruleset-generator Lambda. The Lambda can still be invoked manually when false."
+  type        = bool
+  default     = false
+}
+
+variable "ruleset_generator_schedule_expression" {
+  description = "EventBridge schedule expression for the parallel ruleset-generator Lambda when scheduling is enabled."
+  type        = string
+  default     = "rate(5 minutes)"
 }

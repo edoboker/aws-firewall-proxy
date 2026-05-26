@@ -11,6 +11,8 @@ resource "aws_cloudwatch_log_group" "anf_flow" {
 }
 
 locals {
+  ruleset_generator_rule_group_arns = var.enable_ruleset_generator ? [aws_networkfirewall_rule_group.ruleset_generator[0].arn] : []
+
   public_dns_rules = join("\n", flatten([
     for idx, resolver in var.proxy_public_dns_resolvers : [
       "pass udp ${var.proxy_subnet_cidr} any -> ${resolver} 53 (msg:\"allow proxy DNS UDP to ${resolver}\"; sid:${9000 + (idx * 2)}; rev:1;)",
@@ -26,9 +28,32 @@ locals {
     "pass tls ${var.vpc_cidr} any -> $EXTERNAL_NET 443 (tls.sni; dotprefix; content:\".${fqdn}\"; endswith; nocase; msg:\"allow ${fqdn}\"; sid:${1000 + idx}; rev:1;)"
   ])
 
+  # Experimental HTTP cleartext path for the prototype HTTP Host/original-dst
+  # guard. The proxy preserves the Host header while forwarding to the resolved
+  # IP, so ANF can still enforce the same domain suffix allowlist on port 80.
+  http_fqdn_rules = join("\n", [
+    for idx, fqdn in var.allowed_fqdns :
+    "pass http ${var.vpc_cidr} any -> $EXTERNAL_NET 80 (http.host; dotprefix; content:\".${fqdn}\"; endswith; nocase; msg:\"allow http ${fqdn}\"; sid:${2000 + idx}; rev:1;)"
+  ])
+
+  # Close the off-path resolver side channels (docs/shared-dns-cache.md §5.1,
+  # docs/bypass-vectors.md "block, not bypass"): drop DNS-over-TLS (TCP/853) and
+  # DNS-over-QUIC (UDP/853) so the workload cannot resolve names without traversing
+  # .2 → the Resolver forwarding rule → BIND9. Port-based drops (not the `tls`
+  # keyword) so the block does not depend on TLS-handshake detection. Clients fall
+  # back to Do53, which the egress path controls. DoH (HTTPS/443) is not a separate
+  # rule — it is contained by the SNI allowlist + drop_no_sni path (§5.1). `drop`
+  # actions also surface in the ANF alert log, giving visibility into attempts.
+  off_path_resolver_rules = join("\n", [
+    "drop tcp ${var.vpc_cidr} any -> $EXTERNAL_NET 853 (msg:\"drop DoT off-path resolver (TCP/853)\"; sid:8000; rev:1;)",
+    "drop udp ${var.vpc_cidr} any -> $EXTERNAL_NET 853 (msg:\"drop DoQ off-path resolver (UDP/853)\"; sid:8001; rev:1;)"
+  ])
+
   stateful_rules = join("\n", compact([
     local.public_dns_rules,
-    local.fqdn_rules
+    local.fqdn_rules,
+    local.http_fqdn_rules,
+    local.off_path_resolver_rules
   ]))
 
   # Extract the ANF endpoint ID for the single AZ deployment
@@ -69,6 +94,15 @@ resource "aws_networkfirewall_firewall_policy" "main" {
     stateful_rule_group_reference {
       resource_arn = aws_networkfirewall_rule_group.fqdn_allowlist.arn
       priority     = 1
+    }
+
+    dynamic "stateful_rule_group_reference" {
+      for_each = local.ruleset_generator_rule_group_arns
+
+      content {
+        resource_arn = stateful_rule_group_reference.value
+        priority     = 2
+      }
     }
 
     stateful_default_actions = ["aws:drop_established"]

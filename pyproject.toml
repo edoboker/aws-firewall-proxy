@@ -10,7 +10,7 @@ dependencies = [
 
 [project.optional-dependencies]
 test = ["pytest>=8.0", "jsonschema>=4"]
-benchmark = []
+benchmark = ["matplotlib>=3.7"]
 
 [tool.setuptools.packages.find]
 include = ["common*"]

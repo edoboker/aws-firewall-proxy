@@ -46,6 +46,7 @@ run_quiet "Installing build and runtime packages" /var/log/proxy-dnf-install.log
   findutils \
   diffutils \
   iptables-services \
+  logrotate \
   amazon-cloudwatch-agent
 
 if ! id nginx >/dev/null 2>&1; then
@@ -57,6 +58,7 @@ fi
 mkdir -p \
   /etc/nginx/conf.d \
   /etc/nginx/lua \
+  /etc/logrotate.d \
   /etc/systemd/system/aws-appconfig-agent.service.d \
   /usr/local/openresty/nginx/modules \
   /usr/local/src \
@@ -103,7 +105,9 @@ ln -sf /usr/local/openresty/nginx/sbin/nginx /usr/sbin/nginx
 # IP forwarding for the transparent proxy.
 echo 'net.ipv4.ip_forward = 1' > /etc/sysctl.d/99-proxy.conf
 
-# Persistent PREROUTING redirect (workload's :443 -> OpenResty :8443).
+# Persistent PREROUTING redirects:
+#   * workload :443 -> OpenResty :8443 for TLS/SNI enforcement
+#   * workload :80  -> OpenResty :8081 for experimental HTTP Host enforcement
 cat > /etc/sysconfig/iptables << 'EOF'
 *nat
 :PREROUTING ACCEPT [0:0]
@@ -111,6 +115,7 @@ cat > /etc/sysconfig/iptables << 'EOF'
 :OUTPUT ACCEPT [0:0]
 :POSTROUTING ACCEPT [0:0]
 -A PREROUTING -p tcp --dport 443 -j REDIRECT --to-port 8443
+-A PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 8081
 COMMIT
 *filter
 :INPUT ACCEPT [0:0]
@@ -127,6 +132,7 @@ run_quiet "Installing AWS AppConfig Agent" /var/log/aws-appconfig-agent-install.
   dnf install -y -q https://s3.amazonaws.com/aws-appconfig-downloads/aws-appconfig-agent/linux/x86_64/latest/aws-appconfig-agent.rpm
 
 install -m 0644 "${ASSET_ROOT}/nginx/lua/check_sni.lua" /etc/nginx/lua/check_sni.lua
+install -m 0644 "${ASSET_ROOT}/nginx/lua/check_http_host.lua" /etc/nginx/lua/check_http_host.lua
 install -m 0644 "${ASSET_ROOT}/nginx/lua/init_metrics.lua" /etc/nginx/lua/init_metrics.lua
 install -m 0644 "${ASSET_ROOT}/nginx/lua/log_metrics.lua" /etc/nginx/lua/log_metrics.lua
 install -m 0644 "${ASSET_ROOT}/nginx/lua/proxy_metrics.lua" /etc/nginx/lua/proxy_metrics.lua
@@ -139,6 +145,7 @@ install -m 0644 "${ASSET_ROOT}/systemd/refresh-proxy-runtime-policy.timer" /etc/
 install -m 0644 "${ASSET_ROOT}/systemd/aws-appconfig-agent.override.conf" /etc/systemd/system/aws-appconfig-agent.service.d/override.conf
 install -m 0644 "${ASSET_ROOT}/systemd/nginx.service" /etc/systemd/system/nginx.service
 install -m 0644 "${ASSET_ROOT}/systemd/render-cloudwatch-agent-config.service" /etc/systemd/system/render-cloudwatch-agent-config.service
+install -m 0644 "${ASSET_ROOT}/logrotate/aws-firewall-proxy" /etc/logrotate.d/aws-firewall-proxy
 install -m 0644 "${ASSET_ROOT}/cloudwatch/amazon-cloudwatch-agent.json" \
   /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json.template
 

@@ -17,6 +17,22 @@ resource "aws_route_table_association" "workload" {
   route_table_id = aws_route_table.workload.id
 }
 
+resource "aws_route_table" "direct_workload" {
+  vpc_id = aws_vpc.main.id
+  tags   = { Name = "${local.name}-direct-workload-rt" }
+}
+
+resource "aws_route" "direct_workload_to_firewall" {
+  route_table_id         = aws_route_table.direct_workload.id
+  destination_cidr_block = "0.0.0.0/0"
+  vpc_endpoint_id        = local.anf_endpoint_id
+}
+
+resource "aws_route_table_association" "direct_workload" {
+  subnet_id      = aws_subnet.direct_workload.id
+  route_table_id = aws_route_table.direct_workload.id
+}
+
 # RT-2: Proxy → ANF endpoint (ANF applies FQDN allowlist to all traffic)
 resource "aws_route_table" "proxy" {
   vpc_id = aws_vpc.main.id
@@ -69,6 +85,12 @@ resource "aws_route" "public_to_igw" {
 resource "aws_route" "public_return_workload" {
   route_table_id         = aws_route_table.public.id
   destination_cidr_block = var.workload_subnet_cidr
+  vpc_endpoint_id        = local.anf_endpoint_id
+}
+
+resource "aws_route" "public_return_direct_workload" {
+  route_table_id         = aws_route_table.public.id
+  destination_cidr_block = var.direct_workload_subnet_cidr
   vpc_endpoint_id        = local.anf_endpoint_id
 }
 
