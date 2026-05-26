@@ -104,11 +104,11 @@ describe rejected or never-built designs and confuse what's real.
 
 ## D. Orphaned BIND / shared-DNS infrastructure (never deployed)
 
-- [ ] **`packer/bind-dns/`** (whole dir) — Builds a BIND9 AMI for the shared-DNS
+- [x] **`packer/bind-dns/`** (whole dir) — Builds a BIND9 AMI for the shared-DNS
   feature that was never wired into Terraform. No `packer-build-bind` target, not
   in `packer-build-all`/`deploy-all`, and a test asserts the BIND Terraform was
   removed. **Orphaned.**
-- [ ] **Makefile BIND remnants** — `PACKER_BIND_*` vars + `packer-validate-bind`
+- [x] **Makefile BIND remnants** — `PACKER_BIND_*` vars + `packer-validate-bind`
   target (no build target), supporting the above.
 
 ## E. Stale / zombie tests
@@ -131,9 +131,8 @@ describe rejected or never-built designs and confuse what's real.
   old Lua/StatsD metrics such as `SniMismatchCount` and
   `P50ProxyDecisionLatencyMs`. Rewrite around the implemented async detection
   signals or delete with the old metrics.
-- [x] **BIND-removal assertions** — No test-only cleanup needed while
-  `packer/bind-dns/` remains a Section D removal candidate. If Section D removes
-  it, broaden the existing "BIND Terraform removed" test in the same change.
+- [x] **BIND-removal assertions** — Broadened the existing "BIND Terraform
+  removed" test to cover stale Packer/Makefile BIND remnants too.
 
 ## F. Privacy / professionalism
 

@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 TF_DIR = Path(__file__).resolve().parents[1] / "terraform"
+ROOT_DIR = TF_DIR.parent
 
 pytestmark = pytest.mark.skipif(
     shutil.which("terraform") is None, reason="terraform not on PATH"
@@ -46,6 +47,8 @@ def _variable_block(source: str, name: str) -> str:
 
 
 def test_bind_deployment_terraform_removed():
+    assert not (ROOT_DIR / "packer" / "bind-dns").exists(), "orphaned BIND Packer AMI should be removed"
+
     for removed in (
         "dns_vpc.tf",
         "dns_server.tf",
@@ -68,6 +71,14 @@ def test_bind_deployment_terraform_removed():
         "dns_vpc_cidr",
     ):
         assert forbidden not in terraform_sources
+
+    makefile = (ROOT_DIR / "Makefile").read_text(encoding="utf-8")
+    for forbidden in (
+        "PACKER_BIND",
+        "packer-validate-bind",
+        "packer/bind-dns",
+    ):
+        assert forbidden not in makefile
 
 
 def test_off_path_resolver_ports_dropped():
