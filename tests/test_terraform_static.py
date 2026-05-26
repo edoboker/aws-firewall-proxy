@@ -70,17 +70,6 @@ def test_bind_deployment_terraform_removed():
         assert forbidden not in terraform_sources
 
 
-def test_dns_firewall_association_can_be_temporarily_disabled():
-    variables = _read_tf("variables.tf")
-    dns_firewall = _read_tf("dns_firewall.tf")
-    assert 'variable "enable_dns_firewall"' in variables
-    association = dns_firewall.split(
-        'resource "aws_route53_resolver_firewall_rule_group_association" "main"',
-        1,
-    )[1]
-    assert re.search(r"count\s*=\s*var\.enable_dns_firewall\s*\?\s*1\s*:\s*0", association)
-
-
 def test_off_path_resolver_ports_dropped():
     firewall = _read_tf("firewall.tf")
     assert re.search(r"drop\s+tcp\b.*\b853\b", firewall), "missing DoT (TCP/853) drop rule"

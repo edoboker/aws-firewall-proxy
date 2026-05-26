@@ -26,13 +26,6 @@ def aws_region(outputs) -> str:
 
 
 @pytest.fixture(scope="session")
-def proxy_enforcement_mode(outputs) -> str:
-    # strict: a denied/spoofed connection is reset, so the client curl fails too.
-    # audit:  the event is still logged, but the connection may succeed.
-    return outputs.get("proxy_enforcement_mode", "strict")
-
-
-@pytest.fixture(scope="session")
 def baseline_fqdn(outputs) -> str:
     fqdns = outputs.get("nginx_allowed_snis") or outputs["allowed_fqdns"]
     assert fqdns, "no baseline fqdn output - check terraform/variables.tf and terraform/outputs.tf"
