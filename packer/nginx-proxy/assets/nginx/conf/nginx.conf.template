@@ -74,8 +74,8 @@ stream {
 
     # Debug-only per-connection access log. Off by default: at scale this is
     # millions of lines and dominates CloudWatch ingestion cost. To capture it,
-    # uncomment the access_log line below and reload nginx (see README
-    # "Debugging"). The log group is already provisioned, so lines flow
+    # uncomment the access_log line below and reload nginx (see
+    # docs/observability.md). The log group is already provisioned, so lines flow
     # immediately — no infra change needed.
     log_format proxy '$remote_addr [$time_local] $protocol $status '
                      '$bytes_sent $bytes_received $session_time '

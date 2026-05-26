@@ -2,7 +2,7 @@
 
 Builds the AMI used by `terraform/workload.tf` for the benchmark client EC2.
 Bakes in the [`hey`](https://github.com/rakyll/hey) HTTP load generator and
-`jq`, so `benchmark/run.py` can drive load via SSM without any runtime
+`jq`, so `benchmark/workload_bench/run.py` can drive load via SSM without any runtime
 installation.
 
 ## Prerequisites
@@ -13,51 +13,51 @@ installation.
 
 ## Build
 
-Stand up the shared build VPC once (see `packer/build-infra/main.tf`), then
+Stand up the shared build VPC once (see `terraform/packer-bootstrap/main.tf`), then
 feed its outputs to packer.
 
 **Bash / zsh:**
 
 ```bash
-cd packer/build-infra && terraform init && terraform apply
-cd ../workload
-packer init .
+cd terraform/packer-bootstrap && terraform init && terraform apply
+cd ../..
+packer init packer/workload
 packer build \
   -var "git_sha=$(git rev-parse --short HEAD)" \
-  -var "packer_vpc_id=$(terraform -chdir=../build-infra output -raw vpc_id)" \
-  -var "packer_subnet_id=$(terraform -chdir=../build-infra output -raw subnet_id)" \
-  .
+  -var "packer_vpc_id=$(terraform -chdir=terraform/packer-bootstrap output -raw vpc_id)" \
+  -var "packer_subnet_id=$(terraform -chdir=terraform/packer-bootstrap output -raw subnet_id)" \
+  packer/workload
 ```
 
 **PowerShell** (Windows):
 
 ```powershell
-cd packer\build-infra; terraform init; terraform apply
-cd ..\workload
-packer init .
+cd terraform\packer-bootstrap; terraform init; terraform apply
+cd ..\..
+packer init packer\workload
 packer build `
   -var "git_sha=$(git rev-parse --short HEAD)" `
-  -var "packer_vpc_id=$(terraform -chdir=../build-infra output -raw vpc_id)" `
-  -var "packer_subnet_id=$(terraform -chdir=../build-infra output -raw subnet_id)" `
-  .
+  -var "packer_vpc_id=$(terraform -chdir=terraform/packer-bootstrap output -raw vpc_id)" `
+  -var "packer_subnet_id=$(terraform -chdir=terraform/packer-bootstrap output -raw subnet_id)" `
+  packer\workload
 ```
 
 **Windows `cmd.exe`** (no `$(...)` expansion — pre-resolve into env vars):
 
 ```cmd
-cd packer\build-infra
+cd terraform\packer-bootstrap
 terraform init && terraform apply
 for /f "delims=" %i in ('terraform output -raw vpc_id') do @set PACKER_VPC_ID=%i
 for /f "delims=" %i in ('terraform output -raw subnet_id') do @set PACKER_SUBNET_ID=%i
 for /f "delims=" %i in ('git rev-parse --short HEAD') do @set GIT_SHA=%i
-cd ..\workload
-packer init .
-packer build -var "git_sha=%GIT_SHA%" -var "packer_vpc_id=%PACKER_VPC_ID%" -var "packer_subnet_id=%PACKER_SUBNET_ID%" .
+cd ..\..
+packer init packer\workload
+packer build -var "git_sha=%GIT_SHA%" -var "packer_vpc_id=%PACKER_VPC_ID%" -var "packer_subnet_id=%PACKER_SUBNET_ID%" packer\workload
 ```
 
 `-chdir=` is avoided (cmd's `for /f` mangles `=` inside the inner command),
-so we capture the terraform outputs from inside `build-infra`, then `cd`
-to the workload AMI dir and build.
+so we capture the terraform outputs from inside `terraform/packer-bootstrap`,
+then build from the repo root.
 
 If you have a default VPC in the account and prefer to use it, omit the
 `packer_vpc_id`/`packer_subnet_id` vars — packer falls back to the default VPC.

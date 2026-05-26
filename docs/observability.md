@@ -35,6 +35,29 @@ Detection is probabilistic. CDN-backed domains can produce different A-record
 sets over time or across resolvers, so alerts are investigation signals and do
 not block traffic.
 
+## Operational notes
+
+Observability is tuned for a small CloudWatch footprint. Override observations
+are always written as compact JSON to
+`/var/log/nginx/override_observations.log` and shipped to
+`/aws/firewall-proxy/nginx/override-observations`. The CloudWatch log stream
+name is the EC2 instance ID, so the async detector can include that context in
+alert logs without adding instance metadata to the nginx JSON body.
+
+The proxy publishes aggregated metrics directly to the local CloudWatch Agent
+every `proxy_metrics_publish_interval_seconds` seconds.
+
+The per-connection access log is disabled by default because it can dominate
+CloudWatch Logs ingestion cost. To capture it temporarily, uncomment
+`access_log /var/log/nginx/access.log proxy;` in `/etc/nginx/nginx.conf` on a
+running proxy instance and reload nginx. To bake it into the AMI, uncomment the
+same line in `packer/nginx-proxy/assets/nginx/conf/nginx.conf.template` and
+rebuild.
+
+For verbose Lua diagnostics on the experimental HTTP path, set `PROXY_DEBUG=1`
+in `/etc/sysconfig/aws-firewall-proxy-runtime` and restart nginx. The TLS
+override path does not use Lua.
+
 ## Ad-hoc Logs Insights queries
 
 **Recent override observations** - run against `/aws/firewall-proxy/nginx/override-observations`:

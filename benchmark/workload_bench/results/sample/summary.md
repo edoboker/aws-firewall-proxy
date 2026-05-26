@@ -1,6 +1,6 @@
 # Benchmark summary
 
-Illustrative numbers - re-run `benchmark/run.py` to produce your own.
+Illustrative numbers - re-run `benchmark/workload_bench/run.py` to produce your own.
 
 - Target: `https://google.com` (HEAD)
 - Latency probe: 5s at c=2

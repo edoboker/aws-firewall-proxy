@@ -1,5 +1,5 @@
 # Bootstrap: the S3 bucket that holds remote Terraform state for the other
-# stacks (terraform/ and packer/build-infra/).
+# stacks (terraform/ and terraform/packer-bootstrap/).
 #
 # Chicken-and-egg: this stack creates the state bucket, so it cannot store its
 # own state in that bucket. It deliberately keeps LOCAL state and has no backend
@@ -8,7 +8,7 @@
 # Usage:
 #   terraform -chdir=terraform/bootstrap init
 #   terraform -chdir=terraform/bootstrap apply
-#   # then `terraform init -migrate-state` in terraform/ and packer/build-infra/.
+#   # then `terraform init -migrate-state` in terraform/ and terraform/packer-bootstrap/.
 
 terraform {
   required_version = ">= 1.6"
@@ -34,7 +34,7 @@ data "aws_caller_identity" "current" {}
 
 locals {
   # Account id keeps the name globally unique. Must match the literal bucket name
-  # hardcoded in the backend blocks of terraform/ and packer/build-infra/ (the
+  # hardcoded in the backend blocks of terraform/ and terraform/packer-bootstrap/ (the
   # backend config cannot interpolate, so the two are kept in sync by hand).
   state_bucket_name = "aws-firewall-proxy-tfstate-${data.aws_caller_identity.current.account_id}"
 }

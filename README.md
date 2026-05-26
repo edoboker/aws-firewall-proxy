@@ -1,58 +1,94 @@
 # aws-firewall-proxy
 
-Transparent forward proxy that prevents SNI-spoofed egress by overriding the
-actual upstream destination, then detects suspicious original destinations
-asynchronously.
+AWS egress filtering demo for closing the gap between TLS SNI allowlists and
+the actual destination IP a client connects to.
 
-AWS Network Firewall FQDN rules inspect the TLS SNI value, but they do not
-verify that the client is actually connecting to an IP that belongs to that
-hostname. A client can claim an allowed SNI while routing traffic to a different
-IP. This project inserts a transparent proxy into the VPC egress path so the
-proxy can:
+AWS Network Firewall FQDN rules inspect TLS SNI, but they do not prove that the
+client is connecting to an IP that belongs to that hostname. A client can claim
+an allowed SNI while routing traffic to a different IP. This repo demonstrates
+two ways to reduce that risk.
 
-- recover the original destination IP before NAT
-- read the ClientHello SNI with nginx `ssl_preread`
-- ignore the original destination for forwarding
-- connect upstream to the proxy-resolved SNI host
-- emit structured `{SNI, original_dst}` observations
-- detect suspected SNI spoofing asynchronously in Lambda
+## Implemented Approaches
 
-Important production caveat: prevention and detection are separate. The proxy
-prevents the original spoofed destination from being contacted because it always
-forwards to `$ssl_preread_server_name:443`. The later DNS-to-original-destination
-comparison is probabilistic for large, geo-distributed, CDN-backed services and
-can false-positive. Detection is a signal, not proof, and it does not block
-traffic.
+1. **Override proxy with async detection.** The default path inserts a
+   transparent OpenResty/nginx proxy into egress. It recovers the original
+   destination, reads SNI with `ssl_preread`, forwards to
+   `$ssl_preread_server_name:443` instead of the client-selected IP, and emits
+   compact observations for an async Lambda detector.
+2. **Lambda rule generator.** An optional, experimental path resolves selected
+   exact FQDNs in Lambda, publishes their IPv4 answers into managed prefix
+   lists, and lets AWS Network Firewall enforce rules that bind exact SNI to
+   the generated destination IP sets.
 
 ## Architecture
 
+The Terraform stack is a single-AZ lab with two complementary patterns.
+
+**Default: override proxy with async detection**
+
 ```text
-Workload EC2  -->  nginx proxy EC2  -->  AWS Network Firewall  -->  NAT GW  -->  Internet
- (10.0.1.0/24)      (10.0.2.0/24)         (10.0.3.0/24)              (10.0.4.0/24)
+Workload EC2
+  -> OpenResty/nginx transparent proxy
+  -> AWS Network Firewall
+  -> NAT Gateway
+  -> Internet
+
+Detection pipeline:
+OpenResty override observations
+  -> CloudWatch Agent
+  -> /aws/firewall-proxy/nginx/override-observations
+  -> CloudWatch Logs subscription
+  -> sni-spoofing-detector Lambda
+  -> Lambda logs + AwsFirewallProxy/SuspectedSniSpoofing metric/alarm
 ```
 
-- **Workload subnet** - client EC2 instance; default route points to the proxy ENI.
-- **Proxy subnet** - transparent OpenResty intercepts TLS via iptables REDIRECT, recovers `SO_ORIGINAL_DST` via a custom C stream module, reads SNI with `ssl_preread`, and forwards to `$ssl_preread_server_name:443` rather than the original destination IP. A compact JSON observation log is shipped to CloudWatch Logs.
-- **Async detector** - CloudWatch Logs invokes a Lambda for override observations. The Lambda resolves the SNI, compares the original destination IP with current A records, logs suspected spoofing alerts, and publishes the `AwsFirewallProxy/SuspectedSniSpoofing` metric.
-- **Firewall subnet** - AWS Network Firewall applies an independent FQDN allowlist using Suricata `dotprefix` rules.
-- **Public subnet** - NAT Gateway for internet egress.
+The workload subnet routes default egress to the proxy ENI. The proxy recovers
+the original destination, ignores it for forwarding, connects to the SNI
+hostname, and writes `{SNI, original_dst}` observations. The detector Lambda
+later resolves the SNI, compares it with the original destination IP, and emits
+a suspicion signal. Detection does not block traffic; prevention comes from the
+proxy never connecting to the client-selected destination IP.
 
-Single-AZ deployment. Traffic is steered with route tables - no load balancers or DNS tricks.
+**Optional: Lambda rule generator**
 
-## Quickstart guide
+```text
+Lambda resolver job
+  -> managed prefix lists
+  -> AWS Network Firewall SNI+IP rules
+
+Direct workload EC2 or proxy subnet traffic
+  -> AWS Network Firewall generated rule group
+  -> NAT Gateway
+  -> Internet
+```
+
+The rule generator is a control-plane alternative for selected exact FQDNs. It
+resolves those names in Lambda, refreshes managed prefix lists, and attaches a
+separate Network Firewall rule group that allows traffic only when the TLS SNI
+and destination IP set match the same FQDN. It is experimental and disabled by
+default.
+
+Shared infrastructure includes the VPC, workload/proxy/firewall/public subnets,
+AWS Network Firewall, NAT Gateway, AppConfig runtime policy, CloudWatch
+logs/metrics, SSM access, and Packer-built AMI images.
+
+Traffic is steered with route tables; there are no load balancers in this demo.
+This is not production-ready as an inline egress chokepoint; see
+`docs/scaling-in-production.md` and `docs/production-grade-plan.md`.
+
+## Quickstart
 
 ### Prerequisites
 
-Install on your workstation:
+- Terraform >= 1.5
+- Packer >= 1.10
+- AWS CLI v2
+- Python >= 3.10 plus `pip`
 
-- **Terraform** >= 1.5
-- **Packer** >= 1.10
-- **AWS CLI v2**
-- **Python** >= 3.10 plus `pip`
-
-Your AWS credentials should be able to create VPC, EC2, NAT, IGW, ANF, SSM, IAM, and AMI resources and call `ssm:SendCommand` against the launched instances.
-
-Default region is `eu-north-1`. Override with `TF_VAR_aws_region` and `AWS_REGION` if you deploy elsewhere.
+Your AWS credentials should be able to create VPC, EC2, NAT, IGW, AWS Network
+Firewall, SSM, IAM, AMI, Lambda, CloudWatch, AppConfig, and prefix-list
+resources. Default region is `eu-north-1`; override with `TF_VAR_aws_region`
+and `AWS_REGION`.
 
 ### 1. Build the AMIs
 
@@ -61,197 +97,129 @@ Terraform expects two self-owned AMIs:
 - `aws-firewall-proxy-nginx`
 - `aws-firewall-proxy-workload`
 
-#### 1a. Provision the build VPC
-
-Packer needs a VPC plus public subnet to launch the build instance.
+Provision the Terraform state bucket and Packer build VPC:
 
 ```bash
-cd packer/build-infra
+cd terraform/bootstrap
+terraform init
+terraform apply
+
+cd ../packer-bootstrap
 terraform init
 terraform apply
 ```
 
-If your account already has a usable default VPC, you can skip this and omit the explicit packer VPC/subnet vars.
-
-#### 1b. Build the proxy AMI
+Build the proxy AMI:
 
 ```bash
-cd ../nginx-proxy
-packer init .
+packer init packer/nginx-proxy
 packer build \
   -var "git_sha=$(git rev-parse --short HEAD)" \
-  -var "packer_vpc_id=$(terraform -chdir=../build-infra output -raw vpc_id)" \
-  -var "packer_subnet_id=$(terraform -chdir=../build-infra output -raw subnet_id)" \
-  .
+  -var "packer_vpc_id=$(terraform -chdir=terraform/packer-bootstrap output -raw vpc_id)" \
+  -var "packer_subnet_id=$(terraform -chdir=terraform/packer-bootstrap output -raw subnet_id)" \
+  packer/nginx-proxy
 ```
 
-This builds an AL2023-based AMI with OpenResty, the original-dst C module, nginx `ssl_preread` SNI routing, AWS AppConfig Agent, the runtime policy sync service, iptables-services, awscli v2, and CloudWatch agent config baked in. Mutable proxy policy is no longer baked into the AMI.
-
-#### 1c. Build the workload AMI
+Build the workload AMI:
 
 ```bash
-cd ../workload
-packer init .
+packer init packer/workload
 packer build \
   -var "git_sha=$(git rev-parse --short HEAD)" \
-  -var "packer_vpc_id=$(terraform -chdir=../build-infra output -raw vpc_id)" \
-  -var "packer_subnet_id=$(terraform -chdir=../build-infra output -raw subnet_id)" \
-  .
+  -var "packer_vpc_id=$(terraform -chdir=terraform/packer-bootstrap output -raw vpc_id)" \
+  -var "packer_subnet_id=$(terraform -chdir=terraform/packer-bootstrap output -raw subnet_id)" \
+  packer/workload
 ```
 
-### 2. Deploy the infrastructure
+### 2. Deploy the Stack
 
 ```bash
-cd ../../terraform
+cd terraform
 cp terraform.tfvars.example terraform.tfvars
 terraform init
 terraform apply
 ```
 
-Edit `terraform.tfvars` to choose your environment name, CIDRs, instance sizes, ANF allowlist, and nginx allowlist before applying.
+Edit `terraform.tfvars` before applying to choose environment name, CIDRs,
+instance sizes, firewall allowlists, proxy settings, and optional
+rule-generator settings.
 
-Terraform discovers the most recent matching AMIs via:
+Give the EC2 instances about 60 seconds after `apply` finishes so SSM,
+AppConfig, the runtime-policy renderer, nginx, and CloudWatch Agent settle.
 
-- `data "aws_ami" "nginx_proxy"`
-- `data "aws_ami" "workload"`
-
-If you rebuild an AMI later, a follow-up `terraform apply` rolls the corresponding instance forward to the newest image.
-
-Give the EC2 instances about 60 seconds after `apply` finishes so:
-
-- the SSM agent can register
-- the AppConfig agent can prefetch the deployed runtime policy
-- the proxy can render its initial allowlist, resolver config, and Lua policy before nginx starts
-
-### 3. Run the integration tests
+### 3. Run Tests
 
 ```bash
 make setup
 make test
 ```
 
-The tests use AWS SSM Run Command against the workload and proxy EC2s - no SSH required.
+The tests use SSM Run Command against the workload and proxy EC2s; no SSH is
+required. Live tests skip when no deployed stack is available.
 
-If you prefer the manual flow, it is still:
+### 4. Manual Verification
 
-```bash
-python -m venv .venv
-source .venv/bin/activate          # Windows PowerShell: .venv\Scripts\Activate.ps1
-pip install -e .
-pip install -e ./tests
-pytest -v tests
-```
-
-### 4. Manual verification
-
-Connect to the workload EC2 via EC2 Instance Connect or use SSM Run Command, then:
+Connect to the workload EC2 via EC2 Instance Connect or SSM Run Command:
 
 ```bash
 # Allowed destination chosen by normal DNS
 curl -v https://google.com --max-time 10
-# Expected: succeeds
 
 # Spoofed original destination
 curl -v --resolve google.com:443:1.1.1.1 https://google.com --max-time 10
-# Expected: proxy forwards to google.com:443, not 1.1.1.1; async detector may later alert
+# Expected: proxy forwards to google.com:443, not 1.1.1.1; async detector may alert
 
 # Blocked domain
 curl -v https://example.com --max-time 10
-# Expected: depends on downstream firewall/DNS policy; TLS override proxy no longer enforces an on-host SNI allowlist
+# Expected: depends on downstream firewall/DNS policy
 ```
 
-### 5. Change proxy runtime policy
+### 5. Runtime Policy
 
-Terraform now owns the proxy runtime policy content in AppConfig. Update:
+Terraform publishes the proxy runtime policy to AppConfig. Update these values
+in `terraform.tfvars`, then run `terraform apply`:
 
 - `nginx_allowed_snis`
 - `proxy_public_dns_resolvers`
 - `proxy_dns_queries_per_sni`
 - `proxy_enforcement_mode`
+- `proxy_metrics_publish_interval_seconds`
 
-Then run:
+The proxy refresh timer reads the deployed AppConfig version through the local
+AppConfig Agent and reloads nginx only if rendered runtime files changed.
 
-```bash
-terraform apply
+### 6. Rule Generator
+
+The Lambda rule generator is disabled by default. To test it:
+
+```hcl
+enable_ruleset_generator          = true
+ruleset_generator_fqdns           = ["login.microsoftonline.com", "wiz.io"]
+enable_ruleset_generator_schedule = true
 ```
 
-The proxy refresh timer picks up the deployed AppConfig version from the local AppConfig Agent within about 60 seconds and reloads nginx only if the rendered runtime policy changed.
+Generated FQDNs must not overlap `allowed_fqdns`; otherwise the broader SNI-only
+firewall allowlist can bypass the generated SNI+IP binding.
 
-AppConfig is the runtime source of truth for the proxy policy.
-
-### 6. Run the benchmark (optional)
+### 7. Benchmarks
 
 ```bash
-cp benchmark/config.example.yaml benchmark/config.yaml
-python benchmark/run.py --config benchmark/config.yaml
-python benchmark/run.py --config benchmark/config.yaml --fqdn google.com
+cp benchmark/workload_bench/config.example.yaml benchmark/workload_bench/config.yaml
+python benchmark/workload_bench/run.py --config benchmark/workload_bench/config.yaml
+python benchmark/workload_bench/run.py --config benchmark/workload_bench/config.yaml --fqdn google.com
 ```
 
-See `benchmark/README.md` for the full benchmark workflow and config schema.
+See `benchmark/workload_bench/README.md` and `benchmark/lambda_bench/README.md`
+for benchmark details.
 
-### 7. Tear down
+### 8. Tear Down
 
 ```bash
 cd terraform && terraform destroy
-cd ../packer/build-infra && terraform destroy
+cd ../terraform/packer-bootstrap && terraform destroy
 ```
 
-Terraform does not deregister the Packer-built AMIs; remove them manually if you want a full cleanup.
+Terraform does not deregister Packer-built AMIs; remove them manually for a full
+cleanup.
 
-## Debugging
-
-Observability is tuned for a small CloudWatch footprint. Override observations
-are always written as compact JSON to
-`/var/log/nginx/override_observations.log` and shipped to
-`/aws/firewall-proxy/nginx/override-observations`. The CloudWatch log stream
-name is the EC2 instance ID, so the async detector can include that context in
-alert logs without adding instance metadata to the nginx JSON body.
-
-Operational dashboards no longer depend only on log-derived metrics. The proxy
-publishes aggregated metrics directly to the local CloudWatch agent every
-`proxy_metrics_publish_interval_seconds` seconds (default `20`), while the
-debug toggles below remain optional.
-
-**Per-connection access log.** In production this is millions of lines and
-dominates CloudWatch Logs ingestion cost, so it is disabled. To capture it
-while debugging:
-
-- On a running proxy instance: uncomment the
-  `access_log /var/log/nginx/access.log proxy;` line in `/etc/nginx/nginx.conf`
-  and `sudo nginx -s reload`.
-- Or bake it into the AMI: uncomment the same line in
-  `packer/nginx-proxy/assets/nginx/conf/nginx.conf.template` and rebuild.
-
-Lines flow to the `/aws/firewall-proxy/nginx/access` group within ~a minute. The
-`proxy` log format records every session with its `decision`, SNI, dst IP, and
-resolved IPs — useful for inspecting *allowed* traffic, which the sparse event
-logs intentionally omit.
-
-**Verbose Lua diagnostics for HTTP.** Set `PROXY_DEBUG=1` in
-`/etc/sysconfig/aws-firewall-proxy-runtime` and restart nginx to emit
-step-by-step HTTP guard NOTICE lines to `error.log`. The TLS override path does
-not use Lua.
-
-## Key design decisions
-
-- **`source_dest_check = false`** on the proxy ENI - required for transparent proxying.
-- **iptables `PREROUTING` REDIRECT** - steers inbound port 443 to the proxy listener on 8443 without client-side configuration.
-- **Custom C module for `SO_ORIGINAL_DST`** - surfaces the pre-NAT destination IP to nginx/OpenResty.
-- **nginx `ssl_preread` SNI routing** - reads ClientHello SNI without terminating TLS and forwards to `$ssl_preread_server_name:443`.
-- **AppConfig-backed runtime policy** - allowlist, DNS fanout, and enforcement mode are deployed as one runtime document and rendered locally on the proxy.
-- **Async spoofing detector** - evaluates `{SNI, original_dst}` observations after the fact and emits a non-blocking metric/alarm signal.
-- **Golden AMI via Packer** - avoids boot-time package drift and keeps the proxy runtime reproducible.
-- **Forwarding override before detection** - prevention comes from ignoring the client-selected destination IP for upstream connection setup.
-
-## DNS Matching Caveat
-
-The async SNI/original-dst check asks: "does the original destination IP appear
-in the DNS answers we can observe for this SNI right now?" That is useful, but
-it is not a perfect truth oracle.
-
-For names such as `google.com`, repeated `nslookup google.com 8.8.8.8` calls may return one different IP each time. Other names, such as `login.microsoftonline.com`, may return 10 or more addresses in a single response. Both behaviors are normal. Large providers use recursive resolver location, cache state, TTLs, load balancing, and CDN edge selection to vary answers.
-
-Production implication: suspected spoofing alerts can false-positive for
-high-scale CDN-style domains. In this architecture, those alerts do not block
-traffic. Treat the DNS comparison as a useful investigation signal whose
-confidence depends on domain behavior, resolver choice, cache state, and timing.
+Further operational notes live in `docs/observability.md`.

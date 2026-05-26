@@ -6,11 +6,11 @@ This AMI now bakes the full transparent proxy runtime:
 
 - OpenResty with stream preread support
 - the custom `SO_ORIGINAL_DST` C stream module
-- the Lua preread guard that parses ClientHello, enforces the SNI allowlist, resolves DNS, and detects SNI spoofing
+- nginx `ssl_preread` routing for TLS override, plus Lua helpers for runtime policy, metrics, and the experimental HTTP path
 - iptables-services
 - AWS AppConfig Agent
 - the `refresh-proxy-runtime-policy` systemd timer
-- the CloudWatch agent config for `/var/log/nginx/{access,error}.log`
+- the CloudWatch agent config for nginx/runtime logs
 
 ## Layout
 
@@ -30,45 +30,45 @@ This AMI now bakes the full transparent proxy runtime:
 
 ## Build
 
-Stand up the shared build VPC once (see `packer/build-infra/main.tf`), then feed its outputs to packer.
+Stand up the shared build VPC once (see `terraform/packer-bootstrap/main.tf`), then feed its outputs to packer.
 
 **Bash / zsh:**
 
 ```bash
-cd packer/build-infra && terraform init && terraform apply
-cd ../nginx-proxy
-packer init .
+cd terraform/packer-bootstrap && terraform init && terraform apply
+cd ../..
+packer init packer/nginx-proxy
 packer build \
   -var "git_sha=$(git rev-parse --short HEAD)" \
-  -var "packer_vpc_id=$(terraform -chdir=../build-infra output -raw vpc_id)" \
-  -var "packer_subnet_id=$(terraform -chdir=../build-infra output -raw subnet_id)" \
-  .
+  -var "packer_vpc_id=$(terraform -chdir=terraform/packer-bootstrap output -raw vpc_id)" \
+  -var "packer_subnet_id=$(terraform -chdir=terraform/packer-bootstrap output -raw subnet_id)" \
+  packer/nginx-proxy
 ```
 
 **PowerShell** (Windows):
 
 ```powershell
-cd packer\build-infra; terraform init; terraform apply
-cd ..\nginx-proxy
-packer init .
+cd terraform\packer-bootstrap; terraform init; terraform apply
+cd ..\..
+packer init packer\nginx-proxy
 packer build `
   -var "git_sha=$(git rev-parse --short HEAD)" `
-  -var "packer_vpc_id=$(terraform -chdir=../build-infra output -raw vpc_id)" `
-  -var "packer_subnet_id=$(terraform -chdir=../build-infra output -raw subnet_id)" `
-  .
+  -var "packer_vpc_id=$(terraform -chdir=terraform/packer-bootstrap output -raw vpc_id)" `
+  -var "packer_subnet_id=$(terraform -chdir=terraform/packer-bootstrap output -raw subnet_id)" `
+  packer\nginx-proxy
 ```
 
 **Windows `cmd.exe`** (no `$(...)` expansion - pre-resolve into env vars):
 
 ```cmd
-cd packer\build-infra
+cd terraform\packer-bootstrap
 terraform init && terraform apply
 for /f "delims=" %i in ('terraform output -raw vpc_id') do @set PACKER_VPC_ID=%i
 for /f "delims=" %i in ('terraform output -raw subnet_id') do @set PACKER_SUBNET_ID=%i
 for /f "delims=" %i in ('git rev-parse --short HEAD') do @set GIT_SHA=%i
-cd ..\nginx-proxy
-packer init .
-packer build -var "git_sha=%GIT_SHA%" -var "packer_vpc_id=%PACKER_VPC_ID%" -var "packer_subnet_id=%PACKER_SUBNET_ID%" .
+cd ..\..
+packer init packer\nginx-proxy
+packer build -var "git_sha=%GIT_SHA%" -var "packer_vpc_id=%PACKER_VPC_ID%" -var "packer_subnet_id=%PACKER_SUBNET_ID%" packer\nginx-proxy
 ```
 
 If you have a default VPC in the account and prefer to use it, omit `packer_vpc_id` and `packer_subnet_id`.
@@ -126,16 +126,13 @@ That directive runs during nginx worker initialization, so `init_metrics.lua` is
 
 ### Per-connection trigger flow
 
-Each proxied TLS connection through the stream listener drives the metrics lifecycle:
+The current TLS override listener uses nginx `ssl_preread`, not the legacy Lua
+SNI guard. For each TLS connection it recovers the original destination, reads
+`$ssl_preread_server_name`, forwards to `$ssl_preread_server_name:443`, and
+writes a compact override observation for the async detector.
 
-- `preread_by_lua_file /etc/nginx/lua/check_sni.lua`
-  starts the metrics session with `record_session_start()`, which increments `Requests` and `ActiveConnections`
-- the same preread hook records the terminal policy outcome:
-  - `record_allow()` for accepted sessions
-  - `record_block(...)` for allowlist denies, no-SNI drops, DNS failures, and internal errors
-  - `record_mismatch(...)` for SNI spoofing detections
-- `log_by_lua_file /etc/nginx/lua/log_metrics.lua`
-  runs at session end and calls `finalize_session()`, which decrements `ActiveConnections` and records upstream connect latency and upstream failure metrics for forwarded sessions
+The Lua preread/log hooks remain used by the experimental HTTP path and helper
+modules, but they are not in the hot path for TLS override forwarding.
 
 ### Aggregation and flush behavior
 
@@ -159,11 +156,11 @@ This separation keeps the hot request path inside nginx/Lua while delegating AWS
 
 ## What is on the host at boot
 
-- `/etc/nginx/nginx.conf` - OpenResty stream config with the Lua preread guard and the original-dst module loaded
-- `/etc/nginx/lua/check_sni.lua` - parses ClientHello, enforces the allowlist, resolves DNS, and detects spoofing
+- `/etc/nginx/nginx.conf` - OpenResty stream config with `ssl_preread`, override forwarding, and the original-dst module loaded
+- `/etc/nginx/lua/check_sni.lua` - installed legacy/shared-DNS guard helper; not wired into the current TLS override listener
 - `/etc/nginx/lua/proxy_metrics.lua` - aggregates proxy counters and latency histograms, then flushes them to the local CloudWatch agent StatsD listener
 - `/etc/nginx/lua/log_metrics.lua` - log-phase hook for upstream connect metrics and active-connection cleanup
-- `/etc/nginx/lua/proxy_runtime_policy.lua` - generated Lua runtime policy consumed by `check_sni.lua`
+- `/etc/nginx/lua/proxy_runtime_policy.lua` - generated Lua runtime policy consumed by Lua helper paths
 - `/etc/nginx/lua/debug_log_by_lua.lua` - optional debug-only session summary hook
 - `/etc/nginx/conf.d/sni_allowlist.conf` - generated allowlist map from AppConfig
 - `/etc/nginx/conf.d/proxy_resolver.conf` - generated resolver include from AppConfig
@@ -178,25 +175,21 @@ This separation keeps the hot request path inside nginx/Lua while delegating AWS
 
 ## Logging behavior
 
-Default production-style behavior is:
+Default behavior is:
 
 - OpenResty error log level is `warn`
-- security events go to **dedicated sparse logs**, not the error log:
-  - SNI spoofing detections (`decision="mismatch"`) → `/var/log/nginx/sni_spoofing.log`
-  - allowlist deny / no-SNI drop → `/var/log/nginx/policy_denied.log`
-
-  Both are written by `access_log … if=` rules keyed on `$proxy_decision`, so
-  they fire only on the matching event — not per connection.
-- internal Lua/runtime failures are emitted as `ERR` to `/var/log/nginx/error.log`, headed `lua="sni-guard"`
-- the per-connection access log (`/var/log/nginx/access.log`) is **disabled by default** (debug toggle — see the project README "Debugging")
-
-So the security signal is the volume of the `sni_spoofing.log` (attacks) and
-`policy_denied.log` (blocked-by-policy) streams, each shipped to its own
-CloudWatch log group. Keeping spoofing out of the error log means error-log
-volume stays a clean proxy-health signal.
+- TLS override observations go to `/var/log/nginx/override_observations.log`
+  and are shipped to `/aws/firewall-proxy/nginx/override-observations`
+- the async detector Lambda consumes that log group and emits structured alerts
+  plus the `AwsFirewallProxy/SuspectedSniSpoofing` metric
+- sparse Lua policy logs remain available for the experimental HTTP path
+- the per-connection access log (`/var/log/nginx/access.log`) is **disabled by default**; see `docs/observability.md` for temporary capture instructions
+- `/etc/logrotate.d/aws-firewall-proxy` rotates nginx and runtime-sync logs.
 
 ## Notes
 
-- The current proxy path drops spoofed connections instead of silently correcting them.
+- The current TLS proxy path overrides the upstream destination instead of
+  connecting to the client-selected IP.
 - AppConfig is the runtime policy source of truth.
-- DNS/original-dst matching is probabilistic for CDN-style domains. Multiple resolvers and repeated queries improve coverage, but they cannot guarantee that the proxy sees every IP a client may have received.
+- DNS/original-dst matching in the async detector is probabilistic for
+  CDN-style domains and should be treated as an investigation signal.

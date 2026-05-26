@@ -1,5 +1,23 @@
 # Production-grade refactor plan
 
+## Current implemented approaches
+
+The repo currently carries two complementary approaches:
+
+- **Override proxy with async detection** - transparent OpenResty/nginx recovers the original destination, reads TLS SNI with `ssl_preread`, forwards to `$ssl_preread_server_name:443`, and emits `{SNI, original_dst}` observations for a non-blocking Lambda detector.
+- **Lambda rule generator** - optional Terraform-gated control-plane path that resolves selected exact FQDNs, publishes IPv4 answers into managed prefix lists, and attaches AWS Network Firewall rules that bind exact SNI to the generated IP sets.
+
+Key implementation decisions in the proxy path:
+
+- `source_dest_check = false` on the proxy ENI is required for transparent routing.
+- iptables `PREROUTING` REDIRECT steers inbound 443 traffic to the local proxy listener without client configuration.
+- A custom OpenResty stream module exposes `SO_ORIGINAL_DST` so nginx can log the pre-NAT destination.
+- nginx `ssl_preread` reads ClientHello SNI without TLS termination and forwards to the SNI hostname, not the client-selected IP.
+- AppConfig is used for runtime policy rendering, while the AMI remains reproducible through Packer.
+- Prevention and detection are deliberately separated: forwarding override is inline; spoofing analysis is async.
+
+DNS matching caveat: the async detector asks whether the original destination IP appears in DNS answers observable for the SNI at detection time. That is useful but not authoritative for CDN-backed or geo-distributed domains, where resolver location, cache state, TTLs, and load balancing can produce different valid answer sets. Treat suspected-spoofing alerts as investigation signals, not proof, unless corroborated by additional evidence.
+
 Items are listed in priority order. §1–§3 are the foundational sequence: decide the infra, prove it works, measure it.
 
 ## 1. Underlying infrastructure choice + config store

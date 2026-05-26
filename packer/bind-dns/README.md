@@ -23,20 +23,20 @@ The image bakes a locked-down recursive cache:
 
 - Packer >= 1.10
 - AWS credentials with permission to launch a `t3.small` in `eu-north-1`, create AMIs, and tag them
-- The shared build VPC from `packer/build-infra` if the account does not have a usable default VPC
+- The shared build VPC from `terraform/packer-bootstrap` if the account does not have a usable default VPC
 
 ## Build
 
 **Bash / zsh:**
 
 ```bash
-cd packer/build-infra && terraform init && terraform apply
-cd ../bind-dns
-packer init .
+cd terraform/packer-bootstrap && terraform init && terraform apply
+cd ../..
+packer init packer/bind-dns
 packer build \
   -var "git_sha=$(git rev-parse --short HEAD)" \
-  -var "packer_vpc_id=$(terraform -chdir=../build-infra output -raw vpc_id)" \
-  -var "packer_subnet_id=$(terraform -chdir=../build-infra output -raw subnet_id)" \
+  -var "packer_vpc_id=$(terraform -chdir=terraform/packer-bootstrap output -raw vpc_id)" \
+  -var "packer_subnet_id=$(terraform -chdir=terraform/packer-bootstrap output -raw subnet_id)" \
   -var "bind_allow_query_cidr=10.0.0.0/16" \
   .
 ```
@@ -44,15 +44,15 @@ packer build \
 **PowerShell** (Windows):
 
 ```powershell
-cd packer\build-infra; terraform init; terraform apply
-cd ..\bind-dns
-packer init .
+cd terraform\packer-bootstrap; terraform init; terraform apply
+cd ..\..
+packer init packer\bind-dns
 packer build `
   -var "git_sha=$(git rev-parse --short HEAD)" `
-  -var "packer_vpc_id=$(terraform -chdir=../build-infra output -raw vpc_id)" `
-  -var "packer_subnet_id=$(terraform -chdir=../build-infra output -raw subnet_id)" `
+  -var "packer_vpc_id=$(terraform -chdir=terraform/packer-bootstrap output -raw vpc_id)" `
+  -var "packer_subnet_id=$(terraform -chdir=terraform/packer-bootstrap output -raw subnet_id)" `
   -var "bind_allow_query_cidr=10.0.0.0/16" `
-  .
+  packer\bind-dns
 ```
 
 If you have a default VPC in the account and prefer to use it, omit `packer_vpc_id` and

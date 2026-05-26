@@ -69,7 +69,7 @@ scenario.
 selection. Start from the example:
 
 ```bash
-cp benchmark/config.example.yaml benchmark/config.yaml
+cp benchmark/workload_bench/config.example.yaml benchmark/workload_bench/config.yaml
 ```
 
 Supported keys:
@@ -89,12 +89,12 @@ it is resolved relative to the YAML file's directory.
 ## Run
 
 ```bash
-python benchmark/run.py
-python benchmark/run.py --config benchmark/config.yaml
-python benchmark/run.py --config benchmark/config.yaml --fqdn google.com --results-dir ./out
+python benchmark/workload_bench/run.py
+python benchmark/workload_bench/run.py --config benchmark/workload_bench/config.yaml
+python benchmark/workload_bench/run.py --config benchmark/workload_bench/config.yaml --fqdn google.com --results-dir ./out
 ```
 
-Results land in `benchmark/results/<UTC-timestamp>/{raw.json,summary.md}` by
+Results land in `benchmark/workload_bench/results/<UTC-timestamp>/{raw.json,summary.md}` by
 default.
 
 ## Recovery
