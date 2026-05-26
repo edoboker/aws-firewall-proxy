@@ -109,6 +109,45 @@ def test_dashboard_uses_statsd_metric_type_dimension():
     assert '"P50ProxyDecisionLatencyMs", "InstanceId", aws_instance.proxy.id, "metric_type", "gauge"' in observability
 
 
+def test_override_observation_log_is_collected_and_tls_path_uses_ssl_preread():
+    nginx = (TF_DIR.parent / "packer" / "nginx-proxy" / "assets" / "nginx" / "conf" / "nginx.conf.template").read_text(encoding="utf-8")
+    cloudwatch_agent = (TF_DIR.parent / "packer" / "nginx-proxy" / "assets" / "cloudwatch" / "amazon-cloudwatch-agent.json").read_text(encoding="utf-8")
+
+    tls_server = nginx.split("listen 8443;", 1)[1].split("\n    server {", 1)[0]
+    assert "ssl_preread on;" in tls_server
+    assert "proxy_pass $ssl_preread_server_name:443;" in tls_server
+    assert "preread_by_lua_file /etc/nginx/lua/check_sni.lua;" not in tls_server
+    assert "log_by_lua_file" not in tls_server
+
+    assert "log_format override_observation escape=json" in nginx
+    assert "/var/log/nginx/override_observations.log" in nginx
+    assert '"proxy_instance_id"' not in nginx
+    assert "/var/log/nginx/override_observations.log" in cloudwatch_agent
+    assert "/aws/firewall-proxy/nginx/override-observations" in cloudwatch_agent
+    assert '"log_stream_name": "{instance_id}"' in cloudwatch_agent
+
+
+def test_async_sni_spoofing_detector_terraform_resources():
+    detector = _read_tf("sni_spoofing_detector.tf")
+
+    for marker in (
+        'resource "aws_lambda_function" "sni_spoofing_detector"',
+        'resource "aws_cloudwatch_log_group" "proxy_override_observations"',
+        'resource "aws_cloudwatch_log_subscription_filter" "sni_spoofing_detector"',
+        'resource "aws_lambda_permission" "sni_spoofing_detector_logs"',
+        'resource "aws_cloudwatch_metric_alarm" "suspected_sni_spoofing"',
+    ):
+        assert marker in detector
+
+    assert "/aws/firewall-proxy/nginx/override-observations" in detector
+    assert 'runtime          = "python3.12"' in detector
+    assert 'principal      = "logs.${var.aws_region}.amazonaws.com"' in detector
+    assert 'actions   = ["cloudwatch:PutMetricData"]' in detector
+    assert 'variable = "cloudwatch:namespace"' in detector
+    assert 'sni_spoofing_detector_metric_namespace   = "AwsFirewallProxy"' in detector
+    assert 'sni_spoofing_detector_metric_name        = "SuspectedSniSpoofing"' in detector
+
+
 def test_lambda_ip_fallback_defaults_off():
     variables = _read_tf("variables.tf")
     block = _variable_block(variables, "enable_lambda_ip_fallback")

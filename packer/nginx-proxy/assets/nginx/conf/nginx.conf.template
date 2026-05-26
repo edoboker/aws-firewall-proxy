@@ -43,16 +43,13 @@ stream {
     include /etc/nginx/conf.d/sni_allowlist.conf;
     include /etc/nginx/conf.d/proxy_resolver.conf;
 
-    # The postponed preread hook never fired in this REDIRECT path, so we run
-    # the Lua guard early and recover SNI directly from ClientHello.
-    preread_by_lua_no_postpone on;
-
-    # Sparse security-event logs. Each fires only on its matching decision via
-    # `if=`, so these are event-driven, NOT per-connection. They are shipped to
-    # dedicated CloudWatch log groups, separate from nginx error.log.
-    map $proxy_decision $is_spoofing {
-        mismatch 1;
-        default  0;
+    map $original_dst $original_destination_ip {
+        ~^([^:]+):([0-9]+)$ $1;
+        default "";
+    }
+    map $original_dst $original_destination_port {
+        ~^([^:]+):([0-9]+)$ $2;
+        default "";
     }
     map $proxy_decision $is_policy_denied {
         deny_allowlist 1;
@@ -60,15 +57,19 @@ stream {
         default        0;
     }
 
-    log_format sni_spoofing_log_format
-        '$remote_addr [$time_local] decision="$proxy_decision" '
-        'sni="$client_sni" dst_ip="$dst_ip" '
-        'original_dst="$original_dst" resolved="$resolved_ips"';
+    log_format override_observation escape=json
+        '{"timestamp":"$time_iso8601",'
+        '"source_ip":"$remote_addr",'
+        '"source_port":"$remote_port",'
+        '"sni":"$ssl_preread_server_name",'
+        '"original_destination_ip":"$original_destination_ip",'
+        '"original_destination_port":"$original_destination_port",'
+        '"upstream_host_used":"$ssl_preread_server_name"}';
+
     log_format policy_denied_log_format
         '$remote_addr [$time_local] decision="$proxy_decision" '
         'sni="$client_sni" dst_ip="$dst_ip"';
 
-    access_log /var/log/nginx/sni_spoofing.log sni_spoofing_log_format if=$is_spoofing;
     access_log /var/log/nginx/policy_denied.log policy_denied_log_format if=$is_policy_denied;
 
     # Debug-only per-connection access log. Off by default: at scale this is
@@ -86,13 +87,11 @@ stream {
     server {
         listen 8443;
 
-        preread_by_lua_file /etc/nginx/lua/check_sni.lua;
-        log_by_lua_file /etc/nginx/lua/log_metrics.lua;
+        ssl_preread on;
 
-        # Debug-only: uncomment for one extra per-session summary line.
-        # log_by_lua_file /etc/nginx/lua/debug_log_by_lua.lua;
+        access_log /var/log/nginx/override_observations.log override_observation;
 
-        proxy_pass $client_sni:443;
+        proxy_pass $ssl_preread_server_name:443;
         proxy_connect_timeout 10s;
         proxy_timeout 600s;
     }

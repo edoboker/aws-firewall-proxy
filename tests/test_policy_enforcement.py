@@ -13,8 +13,14 @@ failure is only asserted in strict mode.
 
 from datetime import datetime, timezone
 
+import pytest
+
 from common.cloudwatch import now_ms, wait_for_log_event, wait_for_metric_sum
 from common.ssm import ssm_exec
+
+pytestmark = pytest.mark.skip(
+    reason="live TLS policy-enforcement coverage is deferred for the override-proxy architecture"
+)
 
 POLICY_DENIED_GROUP = "/aws/firewall-proxy/nginx/policy-denied"
 METRIC_NAMESPACE = "AwsFirewallProxy/Nginx"

@@ -11,7 +11,7 @@ locals {
     for fqdn in var.lambda_ip_fallback_fqdns :
     trimsuffix(lower(fqdn), ".")
   ]
-  lambda_ip_fallback_required_entries = length(local.lambda_ip_fallback_fqdns) * var.lambda_ip_fallback_max_addresses_per_fqdn
+  lambda_ip_fallback_required_entries  = length(local.lambda_ip_fallback_fqdns) * var.lambda_ip_fallback_max_addresses_per_fqdn
   lambda_ip_fallback_prefix_list_count = var.enable_lambda_ip_fallback ? max(1, ceil(local.lambda_ip_fallback_required_entries / var.lambda_ip_fallback_prefix_list_max_entries)) : 0
   lambda_ip_fallback_source_cidrs      = [var.proxy_subnet_cidr, var.direct_workload_subnet_cidr]
   lambda_ip_fallback_rules = flatten([

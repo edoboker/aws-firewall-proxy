@@ -33,11 +33,11 @@ TERRAFORM_DESTROY_ARGS ?=
 .DEFAULT_GOAL := help
 
 .PHONY: help \
-	setup test test-offline \
+	setup test \
 	bootstrap-apply \
 	build-infra-init build-infra-apply build-infra-destroy \
 	packer-validate-proxy packer-validate-workload packer-validate-bind \
-	packer-build-proxy packer-build-workload packer-build-bind packer-build-all \
+	packer-build-proxy packer-build-workload packer-build-all \
 	terraform-init terraform-plan terraform-apply terraform-destroy \
 	deploy-all
 
@@ -45,12 +45,10 @@ help:
 	@echo Targets:
 	@echo   make setup                        Create .venv and install local Python packages
 	@echo   make test                         Run pytest -v tests via the repo-root .venv (live tests skip without a deployed stack)
-	@echo   make test-offline                 Run only the offline tests (no AWS / deployed stack needed)
 	@echo   make bootstrap-apply              Create the S3 remote-state bucket (one-time)
 	@echo   make build-infra-apply            Deploy the packer build VPC/subnet
 	@echo   make packer-build-proxy           Build the proxy AMI with OpenResty/Lua/C module
 	@echo   make packer-build-workload        Build the workload AMI
-	@echo   make packer-build-bind            Build the BIND9 shared DNS cache AMI
 	@echo   make packer-build-all             Build all AMIs
 	@echo   make terraform-apply              Deploy the full AWS stack from terraform/
 	@echo   make deploy-all                   Build infra, all AMIs, then terraform apply
@@ -76,10 +74,6 @@ setup:
 
 test:
 	@"$(POWERSHELL)" -NoProfile -ExecutionPolicy Bypass -Command "if (-not (Test-Path '$(VENV_PYTHON)')) { throw 'Virtualenv missing. Run `make setup` first.' }; & '$(VENV_PYTHON)' -m pytest -v tests"
-
-# The offline subset: schema + terraform static checks. No AWS, no deployed stack.
-test-offline:
-	@"$(POWERSHELL)" -NoProfile -ExecutionPolicy Bypass -Command "if (-not (Test-Path '$(VENV_PYTHON)')) { throw 'Virtualenv missing. Run `make setup` first.' }; & '$(VENV_PYTHON)' -m pytest -v tests/test_appconfig_policy_schema.py tests/test_terraform_static.py"
 
 # One-time: create the S3 bucket that holds remote state for the other stacks.
 # Keeps its own state local (it is the stack that creates the state bucket).
@@ -110,10 +104,7 @@ packer-build-proxy:
 packer-build-workload:
 	@"$(POWERSHELL)" -NoProfile -ExecutionPolicy Bypass -Command "$$env:AWS_REGION = '$(AWS_REGION)'; $$env:TF_VAR_aws_region = '$(AWS_REGION)'; & '$(PACKER_WIN_PATH)' init '$(PACKER_WORKLOAD_DIR)'; $$repoRoot = (Get-Location).Path.Replace('\', '/'); $$gitSha = (& git -c ('safe.directory=' + $$repoRoot) rev-parse --short HEAD).Trim(); $$packerVpcId = (& '$(TERRAFORM_WIN_PATH)' -chdir='$(PACKER_BUILD_INFRA_DIR)' output -raw vpc_id).Trim(); $$packerSubnetId = (& '$(TERRAFORM_WIN_PATH)' -chdir='$(PACKER_BUILD_INFRA_DIR)' output -raw subnet_id).Trim(); & '$(PACKER_WIN_PATH)' build -var ('aws_region=$(AWS_REGION)') -var ('instance_type=$(PACKER_WORKLOAD_INSTANCE_TYPE)') -var ('git_sha=' + $$gitSha) -var ('packer_vpc_id=' + $$packerVpcId) -var ('packer_subnet_id=' + $$packerSubnetId) $(PACKER_WORKLOAD_BUILD_ARGS) '$(PACKER_WORKLOAD_DIR)'"
 
-packer-build-bind:
-	@"$(POWERSHELL)" -NoProfile -ExecutionPolicy Bypass -Command "$$env:AWS_REGION = '$(AWS_REGION)'; $$env:TF_VAR_aws_region = '$(AWS_REGION)'; & '$(PACKER_WIN_PATH)' init '$(PACKER_BIND_DIR)'; $$repoRoot = (Get-Location).Path.Replace('\', '/'); $$gitSha = (& git -c ('safe.directory=' + $$repoRoot) rev-parse --short HEAD).Trim(); $$packerVpcId = (& '$(TERRAFORM_WIN_PATH)' -chdir='$(PACKER_BUILD_INFRA_DIR)' output -raw vpc_id).Trim(); $$packerSubnetId = (& '$(TERRAFORM_WIN_PATH)' -chdir='$(PACKER_BUILD_INFRA_DIR)' output -raw subnet_id).Trim(); & '$(PACKER_WIN_PATH)' build -var ('aws_region=$(AWS_REGION)') -var ('instance_type=$(PACKER_BIND_INSTANCE_TYPE)') -var ('git_sha=' + $$gitSha) -var ('packer_vpc_id=' + $$packerVpcId) -var ('packer_subnet_id=' + $$packerSubnetId) -var ('bind_allow_query_cidr=$(PACKER_BIND_ALLOW_QUERY_CIDR)') -var ('bind_min_cache_ttl=$(PACKER_BIND_MIN_CACHE_TTL)') -var ('bind_stale_answer_ttl=$(PACKER_BIND_STALE_ANSWER_TTL)') $(PACKER_BIND_BUILD_ARGS) '$(PACKER_BIND_DIR)'"
-
-packer-build-all: packer-build-proxy packer-build-workload packer-build-bind
+packer-build-all: packer-build-proxy packer-build-workload
 
 terraform-init:
 	@"$(POWERSHELL)" -NoProfile -ExecutionPolicy Bypass -Command "$$env:AWS_REGION = '$(AWS_REGION)'; $$env:TF_VAR_aws_region = '$(AWS_REGION)'; & '$(TERRAFORM_WIN_PATH)' -chdir='$(TERRAFORM_DIR)' init"

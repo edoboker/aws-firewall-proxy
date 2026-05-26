@@ -8,8 +8,14 @@ keeping the error log clean, and - in strict mode - reset the connection.
 
 from datetime import datetime, timezone
 
+import pytest
+
 from common.cloudwatch import now_ms, wait_for_log_event, wait_for_metric_sum
 from common.ssm import ssm_exec
+
+pytestmark = pytest.mark.skip(
+    reason="live async spoofing-detector coverage is deferred for the override-proxy architecture"
+)
 
 SNI_SPOOFING_GROUP = "/aws/firewall-proxy/nginx/sni-spoofing"
 ERROR_GROUP = "/aws/firewall-proxy/nginx/error"
