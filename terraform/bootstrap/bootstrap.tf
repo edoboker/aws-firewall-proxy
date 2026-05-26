@@ -8,7 +8,9 @@
 # Usage:
 #   terraform -chdir=terraform/bootstrap init
 #   terraform -chdir=terraform/bootstrap apply
-#   # then `terraform init -migrate-state` in terraform/ and terraform/packer-bootstrap/.
+#   STATE_BUCKET=$(terraform -chdir=terraform/bootstrap output -raw state_bucket_name)
+#   # then use `terraform init -backend-config="bucket=${STATE_BUCKET}"` in
+#   # terraform/ and terraform/packer-bootstrap/.
 
 terraform {
   required_version = ">= 1.6"
@@ -33,9 +35,9 @@ provider "aws" {
 data "aws_caller_identity" "current" {}
 
 locals {
-  # Account id keeps the name globally unique. Must match the literal bucket name
-  # hardcoded in the backend blocks of terraform/ and terraform/packer-bootstrap/ (the
-  # backend config cannot interpolate, so the two are kept in sync by hand).
+  # Account id keeps the name globally unique. Other stacks receive this value
+  # during `terraform init -backend-config`, because backend config cannot
+  # interpolate Terraform outputs directly.
   state_bucket_name = "aws-firewall-proxy-tfstate-${data.aws_caller_identity.current.account_id}"
 }
 

@@ -6,7 +6,7 @@ from jsonschema import Draft4Validator
 
 # The deploy-time + runtime contract for the proxy runtime policy. AppConfig
 # validates submitted policies against this schema (terraform/appconfig.tf), and
-# load_runtime_policy() in check_sni.lua re-checks the same bounds on the host.
+# the runtime policy renderer consumes the same shape on the host.
 SCHEMA_PATH = (
     Path(__file__).resolve().parents[1]
     / "terraform"
@@ -61,8 +61,7 @@ def _set(path, value):
 
 
 # Each entry corrupts the valid policy in one way the schema must reject. The
-# numeric/enum bounds mirror what load_runtime_policy() enforces on the host, so
-# this list also documents the contract the two guards share.
+# numeric/enum bounds document the contract the runtime policy renderer expects.
 INVALID_CASES = {
     "missing allowed_snis": _without("allowed_snis"),
     "missing dns": _without("dns"),

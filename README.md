@@ -103,9 +103,10 @@ Provision the Terraform state bucket and Packer build VPC:
 cd terraform/bootstrap
 terraform init
 terraform apply
+STATE_BUCKET=$(terraform output -raw state_bucket_name)
 
 cd ../packer-bootstrap
-terraform init
+terraform init -backend-config="bucket=${STATE_BUCKET}"
 terraform apply
 ```
 
@@ -136,7 +137,8 @@ packer build \
 ```bash
 cd terraform
 cp terraform.tfvars.example terraform.tfvars
-terraform init
+STATE_BUCKET=$(terraform -chdir=bootstrap output -raw state_bucket_name)
+terraform init -backend-config="bucket=${STATE_BUCKET}"
 terraform apply
 ```
 

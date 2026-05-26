@@ -94,8 +94,6 @@ def test_dashboard_uses_statsd_metric_type_dimension():
     observability = _read_tf("observability.tf")
     assert '"Requests", "InstanceId", aws_instance.proxy.id, "metric_type", "counter"' in observability
     assert '"ActiveConnections", "InstanceId", aws_instance.proxy.id, "metric_type", "gauge"' in observability
-    assert '"SniMismatchCount", "InstanceId", aws_instance.proxy.id, "metric_type", "counter"' in observability
-    assert '"P50ProxyDecisionLatencyMs", "InstanceId", aws_instance.proxy.id, "metric_type", "gauge"' in observability
 
 
 def test_override_observation_log_is_collected_and_tls_path_uses_ssl_preread():

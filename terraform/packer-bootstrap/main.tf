@@ -3,7 +3,10 @@
 # not coupled to, the main proxy stack.
 #
 # Usage:
-#   cd terraform/packer-bootstrap && terraform init && terraform apply
+#   cd terraform/packer-bootstrap
+#   STATE_BUCKET=$(terraform -chdir=../bootstrap output -raw state_bucket_name)
+#   terraform init -backend-config="bucket=${STATE_BUCKET}"
+#   terraform apply
 #   # Then feed the outputs to packer (from repo root):
 #   packer build \
 #     -var "git_sha=$(git rev-parse --short HEAD)" \
@@ -20,10 +23,11 @@ terraform {
     }
   }
 
-  # Remote state in the bucket created by terraform/bootstrap. Distinct key from
-  # the main terraform/ stack (separate state file, separate per-key lock).
+  # Remote state in the bucket created by terraform/bootstrap. The bucket is
+  # supplied with `terraform init -backend-config="bucket=..."` so account-specific
+  # identifiers are not committed. Distinct key from the main terraform/ stack
+  # (separate state file, separate per-key lock).
   backend "s3" {
-    bucket       = "aws-firewall-proxy-tfstate-067438588597"
     key          = "firewall-proxy/build-infra.tfstate"
     region       = "eu-north-1"
     encrypt      = true
