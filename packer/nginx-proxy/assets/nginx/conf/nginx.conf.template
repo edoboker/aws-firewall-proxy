@@ -3,7 +3,6 @@ load_module /usr/local/openresty/nginx/modules/ngx_stream_original_dst_module.so
 user nginx;
 
 env PROXY_DEBUG;
-env METRICS_PUBLISH_INTERVAL_SECONDS;
 
 worker_processes auto;
 error_log /var/log/nginx/error.log warn;
@@ -27,20 +26,19 @@ http {
 
 stream {
     lua_package_path "/etc/nginx/lua/?.lua;;";
-    lua_shared_dict proxy_metrics 1m;
-    # DNS fanout can intentionally hit slow or varying resolvers. Keep those
-    # low-level cosocket timeouts out of the error log and rely on the
-    # structured Lua internal-failure events instead.
+    # The experimental HTTP listener can intentionally hit slow or varying
+    # resolvers. Keep those low-level cosocket timeouts out of the error log and
+    # rely on structured Lua internal-failure events instead.
     lua_socket_log_errors off;
-    init_worker_by_lua_file /etc/nginx/lua/init_metrics.lua;
 
-    lua_add_variable $proxy_decision;
-    lua_add_variable $client_sni;
-    lua_add_variable $resolved_ips;
-    lua_add_variable $dst_ip;
-    lua_add_variable $proxy_target;
+    # Lua variables used only by the experimental HTTP Host/original-dst guard.
+    lua_add_variable $http_proxy_decision;
+    lua_add_variable $http_host;
+    lua_add_variable $http_resolved_ips;
+    lua_add_variable $http_original_dst_ip;
+    lua_add_variable $http_proxy_target;
 
-    include /etc/nginx/conf.d/sni_allowlist.conf;
+    include /etc/nginx/conf.d/http_host_allowlist.conf;
     include /etc/nginx/conf.d/proxy_resolver.conf;
 
     map $original_dst $original_destination_ip {
@@ -51,7 +49,7 @@ stream {
         ~^([^:]+):([0-9]+)$ $2;
         default "";
     }
-    map $proxy_decision $is_policy_denied {
+    map $http_proxy_decision $is_http_policy_denied {
         deny_allowlist 1;
         drop_no_sni    1;
         default        0;
@@ -66,23 +64,13 @@ stream {
         '"original_destination_port":"$original_destination_port",'
         '"upstream_host_used":"$ssl_preread_server_name"}';
 
-    log_format policy_denied_log_format
-        '$remote_addr [$time_local] decision="$proxy_decision" '
-        'sni="$client_sni" dst_ip="$dst_ip"';
+    # HTTP prototype only. TLS override observations are written by the 8443
+    # listener below.
+    log_format http_policy_denied_log_format
+        '$remote_addr [$time_local] decision="$http_proxy_decision" '
+        'host="$http_host" dst_ip="$http_original_dst_ip"';
 
-    access_log /var/log/nginx/policy_denied.log policy_denied_log_format if=$is_policy_denied;
-
-    # Debug-only per-connection access log. Off by default: at scale this is
-    # millions of lines and dominates CloudWatch ingestion cost. To capture it,
-    # uncomment the access_log line below and reload nginx (see
-    # docs/observability.md). The log group is already provisioned, so lines flow
-    # immediately — no infra change needed.
-    log_format proxy '$remote_addr [$time_local] $protocol $status '
-                     '$bytes_sent $bytes_received $session_time '
-                     'sni="$client_sni" allowed=$sni_allowed '
-                     'decision="$proxy_decision" dst_ip="$dst_ip" '
-                     'original_dst="$original_dst" resolved="$resolved_ips"';
-    # access_log /var/log/nginx/access.log proxy;
+    access_log /var/log/nginx/policy_denied.log http_policy_denied_log_format if=$is_http_policy_denied;
 
     server {
         listen 8443;
@@ -100,9 +88,8 @@ stream {
         listen 8081;
 
         preread_by_lua_file /etc/nginx/lua/check_http_host.lua;
-        log_by_lua_file /etc/nginx/lua/log_metrics.lua;
 
-        proxy_pass $proxy_target;
+        proxy_pass $http_proxy_target;
         proxy_connect_timeout 10s;
         proxy_timeout 600s;
     }

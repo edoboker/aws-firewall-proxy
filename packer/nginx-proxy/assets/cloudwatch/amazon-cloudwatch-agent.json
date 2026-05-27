@@ -1,6 +1,6 @@
 {
   "agent": {
-    "metrics_collection_interval": __METRICS_PUBLISH_INTERVAL_SECONDS__,
+    "metrics_collection_interval": 60,
     "run_as_user": "root"
   },
   "metrics": {
@@ -9,13 +9,8 @@
       "InstanceId": "${aws:InstanceId}",
       "AutoScalingGroupName": "${aws:AutoScalingGroupName}"
     },
-    "force_flush_interval": __METRICS_PUBLISH_INTERVAL_SECONDS__,
+    "force_flush_interval": 60,
     "metrics_collected": {
-      "statsd": {
-        "service_address": "127.0.0.1:8125",
-        "metrics_collection_interval": 10,
-        "metrics_aggregation_interval": __METRICS_PUBLISH_INTERVAL_SECONDS__
-      },
       "cpu": {
         "measurement": [
           {
@@ -25,7 +20,7 @@
           }
         ],
         "totalcpu": true,
-        "metrics_collection_interval": __METRICS_PUBLISH_INTERVAL_SECONDS__
+        "metrics_collection_interval": 60
       },
       "mem": {
         "measurement": [
@@ -35,7 +30,7 @@
             "unit": "Percent"
           }
         ],
-        "metrics_collection_interval": __METRICS_PUBLISH_INTERVAL_SECONDS__
+        "metrics_collection_interval": 60
       }
     }
   },
@@ -47,13 +42,6 @@
             "file_path": "/var/log/nginx/override_observations.log",
             "log_group_name": "/aws/firewall-proxy/nginx/override-observations",
             "log_stream_name": "{instance_id}",
-            "retention_in_days": 3
-          },
-          {
-            "file_path": "/var/log/nginx/sni_spoofing.log",
-            "log_group_name": "/aws/firewall-proxy/nginx/sni-spoofing",
-            "log_stream_name": "{instance_id}",
-            "timestamp_format": "%d/%b/%Y:%H:%M:%S %z",
             "retention_in_days": 3
           },
           {
@@ -79,13 +67,6 @@
             "file_path": "/var/log/aws/appconfig-agent.log",
             "log_group_name": "/aws/firewall-proxy/runtime/appconfig-agent",
             "log_stream_name": "{instance_id}",
-            "retention_in_days": 3
-          },
-          {
-            "file_path": "/var/log/nginx/access.log",
-            "log_group_name": "/aws/firewall-proxy/nginx/access",
-            "log_stream_name": "{instance_id}",
-            "timestamp_format": "%d/%b/%Y:%H:%M:%S %z",
             "retention_in_days": 3
           }
         ]

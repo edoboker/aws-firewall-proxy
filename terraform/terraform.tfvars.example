@@ -14,28 +14,24 @@ public_subnet_cidr          = "10.0.4.0/24"
 proxy_instance_type    = "t3.small"
 workload_instance_type = "t3.micro"
 
-# FQDNs allowed through AWS Network Firewall and DNS Firewall (all others blocked)
+# FQDNs allowed through AWS Network Firewall (all others blocked)
 allowed_fqdns = [
   "google.com",
   "amazonaws.com",
   "cdn.amazonlinux.com"
 ]
 
-# SNIs allowed by the on-host nginx gate (independent of the ANF allowlist above).
-# Terraform publishes these into the AppConfig runtime policy.
-nginx_allowed_snis = [
+# Hosts allowed by the experimental cleartext HTTP Host/original-dst guard.
+# Terraform publishes these into the AppConfig runtime policy used by port 80.
+http_allowed_hosts = [
   "google.com",
   "amazonaws.com",
   "cdn.amazonlinux.com"
 ]
 
-# AppConfig-backed proxy DNS/enforcement runtime policy.
-proxy_dns_queries_per_sni = 3
-proxy_enforcement_mode    = "strict"
-
-# How often the proxy flushes aggregated metrics and the CloudWatch agent
-# publishes them onward to CloudWatch.
-proxy_metrics_publish_interval_seconds = 20
+# AppConfig-backed DNS/enforcement policy for the experimental HTTP guard.
+http_dns_queries_per_host = 3
+http_enforcement_mode     = "strict"
 
 # Experimental ruleset generator. When enabled, the main stack creates the
 # resolver Lambda, managed prefix list, separate IP-set-backed stateful rule

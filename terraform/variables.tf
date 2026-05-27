@@ -70,14 +70,8 @@ variable "allowed_fqdns" {
   default     = ["google.com", "amazonaws.com", "cdn.amazonlinux.com"]
 }
 
-variable "enable_dns_firewall" {
-  description = "Associate the Route 53 Resolver DNS Firewall rule group with the workload VPC. Disable temporarily when debugging resolver forwarding or CNAME behavior; the firewall lists/rules remain managed."
-  type        = bool
-  default     = true
-}
-
-variable "nginx_allowed_snis" {
-  description = "SNIs allowed by the on-host nginx/OpenResty guard. Terraform publishes them into the AppConfig runtime policy."
+variable "http_allowed_hosts" {
+  description = "Hostnames allowed by the experimental cleartext HTTP Host/original-dst guard. TLS egress is controlled by AWS Network Firewall and the override proxy path, not this list."
   type        = list(string)
   default     = ["google.com", "amazonaws.com", "cdn.amazonlinux.com"]
 }
@@ -88,36 +82,25 @@ variable "proxy_public_dns_resolvers" {
   default     = ["1.1.1.1", "8.8.8.8"]
 }
 
-variable "proxy_dns_queries_per_sni" {
-  description = "How many A-record queries the proxy sends to each configured resolver for each SNI."
+variable "http_dns_queries_per_host" {
+  description = "How many A-record queries the experimental HTTP guard sends to each configured resolver for each Host header."
   type        = number
   default     = 3
 
   validation {
-    condition     = var.proxy_dns_queries_per_sni >= 1 && var.proxy_dns_queries_per_sni <= 16
-    error_message = "Proxy DNS queries per SNI must be between 1 and 16."
+    condition     = var.http_dns_queries_per_host >= 1 && var.http_dns_queries_per_host <= 16
+    error_message = "HTTP guard DNS queries per Host must be between 1 and 16."
   }
 }
 
-variable "proxy_enforcement_mode" {
-  description = "Whether the on-host proxy enforces mismatches (`strict`) or only logs them (`audit`)."
+variable "http_enforcement_mode" {
+  description = "Whether the experimental HTTP guard enforces mismatches (`strict`) or only logs them (`audit`)."
   type        = string
   default     = "strict"
 
   validation {
-    condition     = contains(["strict", "audit"], var.proxy_enforcement_mode)
-    error_message = "Proxy enforcement mode must be either strict or audit."
-  }
-}
-
-variable "proxy_metrics_publish_interval_seconds" {
-  description = "How often the proxy flushes aggregated metrics to the local CloudWatch agent StatsD listener."
-  type        = number
-  default     = 20
-
-  validation {
-    condition     = var.proxy_metrics_publish_interval_seconds >= 10 && var.proxy_metrics_publish_interval_seconds <= 900 && floor(var.proxy_metrics_publish_interval_seconds) == var.proxy_metrics_publish_interval_seconds
-    error_message = "Proxy metrics publish interval must be an integer between 10 and 900 seconds."
+    condition     = contains(["strict", "audit"], var.http_enforcement_mode)
+    error_message = "HTTP enforcement mode must be either strict or audit."
   }
 }
 

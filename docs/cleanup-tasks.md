@@ -63,41 +63,41 @@ describe rejected or never-built designs and confuse what's real.
 
 ## C. Dead/orphaned code from the override-proxy pivot
 
-- [ ] **`packer/nginx-proxy/assets/nginx/lua/check_sni.lua`** (639 lines) — Heart
+- [x] **`packer/nginx-proxy/assets/nginx/lua/check_sni.lua`** (639 lines) — Heart
   of the *old* design. No longer wired into `nginx.conf.template` (the `8443`
   server uses `ssl_preread` + `proxy_pass`, no Lua; a test asserts `check_sni.lua`
   is NOT referenced). Still installed by `provision.sh`. **Dead** — also drop its
   install line in `provision.sh`.
-- [ ] **`terraform/dns_firewall.tf`** — Entire 58-line file is commented out.
-- [ ] **`variable "enable_dns_firewall"`** (`terraform/variables.tf`) — Orphaned;
+- [x] **`terraform/dns_firewall.tf`** — Entire 58-line file is commented out.
+- [x] **`variable "enable_dns_firewall"`** (`terraform/variables.tf`) — Orphaned;
   only "consumer" is the commented-out file above.
-- [ ] **`terraform/ruleset_generator_moved.tf`** — Terraform `moved{}` rename
+- [x] **`terraform/ruleset_generator_moved.tf`** — Terraform `moved{}` rename
   scaffolding. Only useful to migrate *existing* state; in a fresh submission it
   references resource names that no longer exist.
-- [ ] *(judgment call)* `packer/nginx-proxy/assets/nginx/lua/debug_log_by_lua.lua`
+- [x] *(judgment call)* `packer/nginx-proxy/assets/nginx/lua/debug_log_by_lua.lua`
   — Dev-only "uncomment to enable" hook, unreferenced.
-- [ ] **Old CloudWatch/Lua observability residue** — `terraform/observability.tf`
+- [x] **Old CloudWatch/Lua observability residue** — `terraform/observability.tf`
   still defines log groups, metric filters, and dashboard widgets for old
   `sni_spoofing`, `policy_denied`, and Lua StatsD metrics. Decide whether these
   are still produced by the current TLS override path, HTTP-only residue, or
   dead dashboard noise.
-- [ ] **CloudWatch agent log tail list** —
+- [x] **CloudWatch agent log tail list** —
   `packer/nginx-proxy/assets/cloudwatch/amazon-cloudwatch-agent.json` still tails
   `sni_spoofing.log`, `policy_denied.log`, and `access.log`. Confirm whether each
   log is still intentionally emitted; otherwise drop the tail entry and matching
   CloudWatch resources.
-- [ ] **Old nginx Lua-decision variables/log formats** —
+- [x] **Old nginx Lua-decision variables/log formats** —
   `nginx.conf.template` still contains variables and log formats for
   `$proxy_decision`, `$client_sni`, `$resolved_ips`, `$dst_ip`,
   `$proxy_target`, `policy_denied_log_format`, and related policy-denied access
   logging. Remove or explicitly mark as HTTP-only if the experimental HTTP path
   survives.
-- [ ] **AppConfig runtime policy leftovers** — `nginx_allowed_snis`,
+- [x] **AppConfig runtime policy leftovers** — `nginx_allowed_snis`,
   `proxy_dns_queries_per_sni`, `proxy_enforcement_mode`, related outputs,
   runtime policy schema fields, and AppConfig JSON content appear tied to the old
   on-host guard or the experimental HTTP path. Remove them or document them as
   HTTP-only before submission.
-- [ ] **Lua metrics modules** — `init_metrics.lua`, `log_metrics.lua`, and
+- [x] **Lua metrics modules** — `init_metrics.lua`, `log_metrics.lua`, and
   `proxy_metrics.lua` look like old request-path metric plumbing. Verify whether
   the TLS override path still calls them; if not, remove the modules, install
   lines, CloudWatch dashboard panels, and tests together.

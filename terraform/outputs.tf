@@ -23,9 +23,9 @@ output "allowed_fqdns" {
   value       = var.allowed_fqdns
 }
 
-output "nginx_allowed_snis" {
-  description = "SNIs allowed by the on-host nginx/OpenResty guard - consumed by the test harness"
-  value       = var.nginx_allowed_snis
+output "http_allowed_hosts" {
+  description = "Hosts allowed by the experimental HTTP Host/original-dst guard"
+  value       = var.http_allowed_hosts
 }
 
 output "aws_region" {
@@ -33,19 +33,9 @@ output "aws_region" {
   value       = var.aws_region
 }
 
-output "proxy_metrics_publish_interval_seconds" {
-  description = "Metrics publish interval for the on-host proxy and CloudWatch agent"
-  value       = var.proxy_metrics_publish_interval_seconds
-}
-
-output "proxy_metric_namespace" {
-  description = "CloudWatch namespace for proxy metrics"
-  value       = "AwsFirewallProxy/Nginx"
-}
-
-output "proxy_enforcement_mode" {
-  description = "Proxy enforcement mode (strict|audit) - consumed by the test harness to decide whether a denied connection should also fail client-side"
-  value       = var.proxy_enforcement_mode
+output "http_enforcement_mode" {
+  description = "Experimental HTTP guard enforcement mode (strict|audit)"
+  value       = var.http_enforcement_mode
 }
 
 output "proxy_runtime_policy_appconfig_path" {

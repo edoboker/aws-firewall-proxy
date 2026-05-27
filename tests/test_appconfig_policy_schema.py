@@ -28,8 +28,8 @@ def validator(schema) -> Draft4Validator:
 
 def _valid_policy() -> dict:
     return {
-        "allowed_snis": ["google.com", "amazonaws.com"],
-        "dns": {"resolvers": ["169.254.169.253", "1.1.1.1"], "queries_per_sni": 3},
+        "allowed_hosts": ["google.com", "amazonaws.com"],
+        "dns": {"resolvers": ["169.254.169.253", "1.1.1.1"], "queries_per_host": 3},
         "enforcement": {"mode": "strict"},
     }
 
@@ -63,13 +63,13 @@ def _set(path, value):
 # Each entry corrupts the valid policy in one way the schema must reject. The
 # numeric/enum bounds document the contract the runtime policy renderer expects.
 INVALID_CASES = {
-    "missing allowed_snis": _without("allowed_snis"),
+    "missing allowed_hosts": _without("allowed_hosts"),
     "missing dns": _without("dns"),
     "missing enforcement": _without("enforcement"),
     "mode not in enum": _set(["enforcement", "mode"], "monitor"),
-    "queries_per_sni below min": _set(["dns", "queries_per_sni"], 0),
-    "queries_per_sni above max": _set(["dns", "queries_per_sni"], 17),
-    "queries_per_sni not integer": _set(["dns", "queries_per_sni"], 2.5),
+    "queries_per_host below min": _set(["dns", "queries_per_host"], 0),
+    "queries_per_host above max": _set(["dns", "queries_per_host"], 17),
+    "queries_per_host not integer": _set(["dns", "queries_per_host"], 2.5),
     "no resolvers": _set(["dns", "resolvers"], []),
     "unknown top-level key": _set(["extra"], 1),
 }

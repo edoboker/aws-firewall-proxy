@@ -38,7 +38,7 @@ resource "aws_ec2_instance_connect_endpoint" "proxy" {
   tags = { Name = "${local.name}-eic-endpoint" }
 }
 
-# ── nginx Proxy — EC2 with OpenResty, the original-dst module, and Lua guard ─
+# nginx Proxy - EC2 with OpenResty, the original-dst module, and TLS override
 
 resource "aws_security_group" "proxy" {
   name        = "${local.name}-nginx-sg"
@@ -87,18 +87,15 @@ resource "aws_instance" "proxy" {
   source_dest_check           = false
   associate_public_ip_address = false
 
-  # AMI bakes in OpenResty, the original-dst module, Lua policy, the AppConfig
-  # Agent, and the runtime policy sync service.
+  # AMI bakes in OpenResty, the original-dst module, the AppConfig Agent, and
+  # the runtime policy sync service for the experimental HTTP listener.
   # User_data injects the env-specific AppConfig coordinates plus local runtime
-  # env vars, then starts the agent and sync before nginx. We intentionally
-  # keep the metrics publish interval out of AppConfig in this MVP so telemetry
-  # cadence changes do not also imply hot-reloading the CloudWatch agent path.
+  # env vars, then starts the agent and sync before nginx.
   user_data_base64 = base64encode(<<-EOF
     #!/bin/bash
     set -e
     cat > /etc/sysconfig/aws-firewall-proxy-runtime <<CONF
     PROXY_DEBUG=0
-    METRICS_PUBLISH_INTERVAL_SECONDS=${var.proxy_metrics_publish_interval_seconds}
     CONF
     cat > /etc/sysconfig/aws-appconfig-agent <<CONF
     SERVICE_REGION=${var.aws_region}

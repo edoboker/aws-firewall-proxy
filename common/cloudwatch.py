@@ -2,10 +2,8 @@
 
 This module supports two styles of assertions:
 
-- direct proxy metrics emitted via local StatsD and published by the CloudWatch
-  agent
-- sparse security-event logs that are turned into CloudWatch metrics by metric
-  filters
+- host/proxy metrics published by the CloudWatch agent
+- sparse security-event logs and detector metrics
 """
 
 from __future__ import annotations

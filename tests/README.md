@@ -36,5 +36,5 @@ If Terraform outputs are unavailable, live tests skip through the shared
 - **`test_proxy_runtime.py`** - checks `nginx -t`, iptables `:443 -> :8443` REDIRECT, the original-dst C module, `ssl_preread`, and override observation logging.
 - **`test_workload_baseline.py`** - verifies a normal HTTPS request from the workload succeeds.
 
-The old synchronous Lua SNI enforcement live tests are temporarily skipped while
-async detector live coverage is designed.
+The old synchronous Lua SNI enforcement live tests were removed with the legacy
+guard; async detector live coverage is still a future addition.

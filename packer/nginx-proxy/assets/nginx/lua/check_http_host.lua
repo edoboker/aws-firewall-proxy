@@ -4,7 +4,7 @@
 --   * cleartext HTTP on port 80 only
 --   * require exactly one Host header
 --   * reject CONNECT and absolute-form host disagreement
---   * resolve Host through the same runtime DNS policy as the TLS SNI guard
+--   * resolve Host through the AppConfig-backed HTTP runtime DNS policy
 --   * verify original destination IP is in the Host RRset
 --   * forward to one resolved Host IP on port 80, preserving the HTTP Host header
 
@@ -12,7 +12,6 @@ local DEBUG = (os.getenv("PROXY_DEBUG") or "0") == "1"
 local MAX_HEADER_BYTES = 8192
 local MAX_CNAME_DEPTH = 5
 local RUNTIME_POLICY_PATH = "/etc/nginx/lua/proxy_runtime_policy.lua"
-local metrics = require("proxy_metrics")
 
 local function q(value)
     if value == nil then
@@ -50,19 +49,17 @@ local function debug_log(event, fields)
 end
 
 local function set_decision(decision)
-    set_var("proxy_decision", decision)
+    set_var("http_proxy_decision", decision)
 end
 
 local function fail_internal(event, fields)
     set_decision(event)
-    metrics.record_block("internal_error")
     log_event(ngx.ERR, event, fields)
     return ngx.exit(ngx.ERROR)
 end
 
 local function fail_quiet(decision, reason)
     set_decision(decision)
-    metrics.record_block(reason or "internal_error")
     debug_log(decision, nil)
     return ngx.exit(ngx.ERROR)
 end
@@ -103,9 +100,9 @@ local function load_runtime_policy()
         return nil, "runtime_policy_missing_resolvers"
     end
 
-    local queries_per_host = tonumber(dns.queries_per_sni)
+    local queries_per_host = tonumber(dns.queries_per_host)
     if not queries_per_host or queries_per_host < 1 or queries_per_host > 16 or queries_per_host % 1 ~= 0 then
-        return nil, "runtime_policy_invalid_queries_per_sni"
+        return nil, "runtime_policy_invalid_queries_per_host"
     end
 
     local mode = tostring(policy.enforcement and policy.enforcement.mode or "")
@@ -290,12 +287,11 @@ end
 local ok, runtime_err = xpcall(function()
     local original_dst = ngx.var.original_dst
 
-    metrics.record_session_start()
-    set_var("proxy_decision", "")
-    set_var("client_sni", "")
-    set_var("dst_ip", "")
-    set_var("resolved_ips", "")
-    set_var("proxy_target", "")
+    set_var("http_proxy_decision", "")
+    set_var("http_host", "")
+    set_var("http_original_dst_ip", "")
+    set_var("http_resolved_ips", "")
+    set_var("http_proxy_target", "")
 
     local runtime_policy, policy_err = load_runtime_policy()
     if not runtime_policy then
@@ -310,7 +306,7 @@ local ok, runtime_err = xpcall(function()
     if not dst_ip then
         return fail_internal("bad_original_dst", { original_dst = original_dst })
     end
-    set_var("dst_ip", dst_ip)
+    set_var("http_original_dst_ip", dst_ip)
 
     local headers, peek_err = peek_http_headers()
     if not headers then
@@ -325,9 +321,9 @@ local ok, runtime_err = xpcall(function()
         return fail_internal("http_request_parse_failed", { original_dst = original_dst, dst_ip = dst_ip, err = parse_err })
     end
 
-    set_var("client_sni", request.host)
+    set_var("http_host", request.host)
 
-    local host_allowed = ngx.var.sni_allowed
+    local host_allowed = ngx.var.http_host_allowed
     if host_allowed ~= "1" then
         debug_log("deny_allowlist", { host = request.host, original_dst = original_dst, dst_ip = dst_ip })
         return fail_quiet("deny_allowlist", "allowlist_denied")
@@ -344,11 +340,10 @@ local ok, runtime_err = xpcall(function()
     end
 
     local resolved_str = table.concat(resolved_list, ",")
-    set_var("resolved_ips", resolved_str)
+    set_var("http_resolved_ips", resolved_str)
 
     if not resolved[dst_ip] then
         set_decision("mismatch")
-        metrics.record_mismatch(runtime_policy.enforce)
         log_event(ngx.NOTICE, "http_host_mismatch", {
             decision = "mismatch",
             host = request.host,
@@ -362,9 +357,8 @@ local ok, runtime_err = xpcall(function()
     end
 
     local proxy_target = resolved_list[1] .. ":80"
-    set_var("proxy_target", proxy_target)
+    set_var("http_proxy_target", proxy_target)
     set_decision("allow")
-    metrics.record_allow()
     debug_log("allow", {
         host = request.host,
         method = request.method,
@@ -380,7 +374,6 @@ end)
 
 if not ok then
     set_decision("lua_exception")
-    metrics.record_block("internal_error")
     log_event(ngx.ERR, "lua_exception", { err = runtime_err })
     return ngx.exit(ngx.ERROR)
 end

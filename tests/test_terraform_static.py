@@ -101,10 +101,53 @@ def test_ruleset_generator_rule_group_can_attach_to_firewall_policy():
     )
 
 
-def test_dashboard_uses_statsd_metric_type_dimension():
+def test_legacy_override_proxy_pivot_artifacts_are_removed():
+    removed_paths = [
+        ROOT_DIR / "packer" / "nginx-proxy" / "assets" / "nginx" / "lua" / "check_sni.lua",
+        ROOT_DIR / "packer" / "nginx-proxy" / "assets" / "nginx" / "lua" / "debug_log_by_lua.lua",
+        ROOT_DIR / "packer" / "nginx-proxy" / "assets" / "nginx" / "lua" / "init_metrics.lua",
+        ROOT_DIR / "packer" / "nginx-proxy" / "assets" / "nginx" / "lua" / "log_metrics.lua",
+        ROOT_DIR / "packer" / "nginx-proxy" / "assets" / "nginx" / "lua" / "proxy_metrics.lua",
+        TF_DIR / "dns_firewall.tf",
+        TF_DIR / "ruleset_generator_moved.tf",
+    ]
+    for path in removed_paths:
+        assert not path.exists(), f"{path.relative_to(ROOT_DIR)} should be removed"
+
+    variables = _read_tf("variables.tf")
+    for removed_variable in (
+        'variable "enable_dns_firewall"',
+        'variable "nginx_allowed_snis"',
+        'variable "proxy_dns_queries_per_sni"',
+        'variable "proxy_enforcement_mode"',
+        'variable "proxy_metrics_publish_interval_seconds"',
+    ):
+        assert removed_variable not in variables
+
+    provision = (ROOT_DIR / "packer" / "nginx-proxy" / "provision.sh").read_text(encoding="utf-8")
+    for removed_install in (
+        "check_sni.lua",
+        "debug_log_by_lua.lua",
+        "init_metrics.lua",
+        "log_metrics.lua",
+        "proxy_metrics.lua",
+    ):
+        assert removed_install not in provision
+
+
+def test_dashboard_uses_current_override_observation_signals():
     observability = _read_tf("observability.tf")
-    assert '"Requests", "InstanceId", aws_instance.proxy.id, "metric_type", "counter"' in observability
-    assert '"ActiveConnections", "InstanceId", aws_instance.proxy.id, "metric_type", "gauge"' in observability
+    assert "local.sni_spoofing_detector_metric_name" in observability
+    assert "proxy_override_observations" in observability
+    assert "sni_spoofing_detector" in observability
+    for legacy_metric in (
+        "SniMismatchCount",
+        "P50ProxyDecisionLatencyMs",
+        "P50UpstreamConnectLatencyMs",
+        "ActiveConnections",
+        '"metric_type"',
+    ):
+        assert legacy_metric not in observability
 
 
 def test_override_observation_log_is_collected_and_tls_path_uses_ssl_preread():
@@ -116,6 +159,8 @@ def test_override_observation_log_is_collected_and_tls_path_uses_ssl_preread():
     assert "proxy_pass $ssl_preread_server_name:443;" in tls_server
     assert "preread_by_lua_file /etc/nginx/lua/check_sni.lua;" not in tls_server
     assert "log_by_lua_file" not in tls_server
+    assert "lua_shared_dict proxy_metrics" not in nginx
+    assert "init_worker_by_lua_file" not in nginx
 
     assert "log_format override_observation escape=json" in nginx
     assert "/var/log/nginx/override_observations.log" in nginx
@@ -123,6 +168,8 @@ def test_override_observation_log_is_collected_and_tls_path_uses_ssl_preread():
     assert "/var/log/nginx/override_observations.log" in cloudwatch_agent
     assert "/aws/firewall-proxy/nginx/override-observations" in cloudwatch_agent
     assert '"log_stream_name": "{instance_id}"' in cloudwatch_agent
+    assert "/var/log/nginx/sni_spoofing.log" not in cloudwatch_agent
+    assert "/var/log/nginx/access.log" not in cloudwatch_agent
 
 
 def test_async_sni_spoofing_detector_terraform_resources():

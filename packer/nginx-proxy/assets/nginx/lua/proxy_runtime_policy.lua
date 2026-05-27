@@ -3,7 +3,7 @@
 return {
     dns = {
         resolvers = { "169.254.169.253" },
-        queries_per_sni = 1,
+        queries_per_host = 1,
     },
     enforcement = {
         mode = "strict",

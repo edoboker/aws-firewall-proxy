@@ -2,7 +2,7 @@
 # AMI provisioning:
 #   * build and install OpenResty with stream preread support
 #   * compile and install the original-dst stream C module
-#   * install the Lua SNI/original-dst guard
+#   * install the TLS override config and experimental HTTP Host guard
 #   * bake in the AppConfig-backed runtime policy sync and CloudWatch config
 set -euo pipefail
 
@@ -131,12 +131,7 @@ chmod 0644 /etc/nginx/nginx.conf
 run_quiet "Installing AWS AppConfig Agent" /var/log/aws-appconfig-agent-install.log \
   dnf install -y -q https://s3.amazonaws.com/aws-appconfig-downloads/aws-appconfig-agent/linux/x86_64/latest/aws-appconfig-agent.rpm
 
-install -m 0644 "${ASSET_ROOT}/nginx/lua/check_sni.lua" /etc/nginx/lua/check_sni.lua
 install -m 0644 "${ASSET_ROOT}/nginx/lua/check_http_host.lua" /etc/nginx/lua/check_http_host.lua
-install -m 0644 "${ASSET_ROOT}/nginx/lua/init_metrics.lua" /etc/nginx/lua/init_metrics.lua
-install -m 0644 "${ASSET_ROOT}/nginx/lua/log_metrics.lua" /etc/nginx/lua/log_metrics.lua
-install -m 0644 "${ASSET_ROOT}/nginx/lua/proxy_metrics.lua" /etc/nginx/lua/proxy_metrics.lua
-install -m 0644 "${ASSET_ROOT}/nginx/lua/debug_log_by_lua.lua" /etc/nginx/lua/debug_log_by_lua.lua
 install -m 0644 "${ASSET_ROOT}/nginx/lua/proxy_runtime_policy.lua" /etc/nginx/lua/proxy_runtime_policy.lua
 install -m 0755 "${ASSET_ROOT}/scripts/refresh-proxy-runtime-policy.sh" /usr/local/sbin/refresh-proxy-runtime-policy.sh
 install -m 0755 "${ASSET_ROOT}/scripts/render-cloudwatch-agent-config.sh" /usr/local/sbin/render-cloudwatch-agent-config.sh
@@ -153,15 +148,14 @@ install -m 0644 "${ASSET_ROOT}/cloudwatch/amazon-cloudwatch-agent.json" \
 # AppConfig and is rendered to disk by refresh-proxy-runtime-policy.sh.
 cat > /etc/sysconfig/aws-firewall-proxy-runtime << EOF
 PROXY_DEBUG=0
-METRICS_PUBLISH_INTERVAL_SECONDS=20
 EOF
 chmod 0644 /etc/sysconfig/aws-firewall-proxy-runtime
 
 # Seed empty runtime config files so nginx -t passes in the AMI build. The
 # first real policy render must happen on instance boot before nginx starts.
-cat > /etc/nginx/conf.d/sni_allowlist.conf << 'EOF'
+cat > /etc/nginx/conf.d/http_host_allowlist.conf << 'EOF'
 # Populated by /usr/local/sbin/refresh-proxy-runtime-policy.sh.
-map $client_sni $sni_allowed {
+map $http_host $http_host_allowed {
     hostnames;
     default 0;
 }

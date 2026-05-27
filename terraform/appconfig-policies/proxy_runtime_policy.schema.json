@@ -2,9 +2,9 @@
   "$schema": "http://json-schema.org/draft-04/schema#",
   "type": "object",
   "additionalProperties": false,
-  "required": ["allowed_snis", "dns", "enforcement"],
+  "required": ["allowed_hosts", "dns", "enforcement"],
   "properties": {
-    "allowed_snis": {
+    "allowed_hosts": {
       "type": "array",
       "items": {
         "type": "string",
@@ -15,7 +15,7 @@
     "dns": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["resolvers", "queries_per_sni"],
+      "required": ["resolvers", "queries_per_host"],
       "properties": {
         "resolvers": {
           "type": "array",
@@ -26,7 +26,7 @@
           },
           "uniqueItems": true
         },
-        "queries_per_sni": {
+        "queries_per_host": {
           "type": "integer",
           "minimum": 1,
           "maximum": 16

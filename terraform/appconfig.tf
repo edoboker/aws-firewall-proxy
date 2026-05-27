@@ -4,27 +4,24 @@ locals {
     [for resolver in var.proxy_public_dns_resolvers : resolver if resolver != "169.254.169.253"]
   )
 
-  # MVP choice: keep the AppConfig document focused on traffic policy
-  # (`allowed_snis`, DNS behavior, enforcement mode). The metrics publish
-  # interval stays Terraform-owned for now because changing it would also need
-  # coordinated CloudWatch agent re-render/restart behavior and dashboard/test
-  # timing updates. A future "hot-reload everything via AppConfig" design is
-  # valid, but we are intentionally not taking that on in this pass.
+  # AppConfig renders the nginx resolver include used by TLS override proxy_pass.
+  # The allowlist, query count, and enforcement fields are only for the
+  # experimental cleartext HTTP Host/original-dst listener.
   proxy_runtime_policy = {
-    allowed_snis = var.nginx_allowed_snis
+    allowed_hosts = var.http_allowed_hosts
     dns = {
-      resolvers       = local.proxy_dns_resolvers
-      queries_per_sni = var.proxy_dns_queries_per_sni
+      resolvers        = local.proxy_dns_resolvers
+      queries_per_host = var.http_dns_queries_per_host
     }
     enforcement = {
-      mode = var.proxy_enforcement_mode
+      mode = var.http_enforcement_mode
     }
   }
 }
 
 resource "aws_appconfig_application" "proxy" {
   name        = local.name
-  description = "Runtime policy for the on-host nginx/OpenResty proxy"
+  description = "Runtime DNS and experimental HTTP policy for the proxy"
 }
 
 resource "aws_appconfig_environment" "proxy" {
@@ -36,7 +33,7 @@ resource "aws_appconfig_environment" "proxy" {
 resource "aws_appconfig_configuration_profile" "proxy_runtime_policy" {
   application_id = aws_appconfig_application.proxy.id
   name           = "runtime-policy"
-  description    = "Unified runtime policy for the on-host proxy"
+  description    = "Proxy resolver and HTTP Host/original-dst guard runtime policy"
   location_uri   = "hosted"
   type           = "AWS.Freeform"
 

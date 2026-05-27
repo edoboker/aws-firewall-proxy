@@ -69,8 +69,9 @@ and destination IP set match the same FQDN. It is experimental and disabled by
 default.
 
 Shared infrastructure includes the VPC, workload/proxy/firewall/public subnets,
-AWS Network Firewall, NAT Gateway, AppConfig runtime policy, CloudWatch
-logs/metrics, SSM access, and Packer-built AMI images.
+AWS Network Firewall, NAT Gateway, CloudWatch logs/metrics, SSM access, and
+Packer-built AMI images. AppConfig renders the proxy resolver config and the
+experimental cleartext HTTP Host/original-dst policy.
 
 Traffic is steered with route tables; there are no load balancers in this demo.
 This is not production-ready as an inline egress chokepoint; see
@@ -143,7 +144,7 @@ terraform apply
 ```
 
 Edit `terraform.tfvars` before applying to choose environment name, CIDRs,
-instance sizes, firewall allowlists, proxy settings, and optional
+instance sizes, firewall allowlists, HTTP prototype settings, and optional
 rule-generator settings.
 
 Give the EC2 instances about 60 seconds after `apply` finishes so SSM,
@@ -178,16 +179,20 @@ curl -v https://example.com --max-time 10
 
 ### 5. Runtime Policy
 
-Terraform publishes the proxy runtime policy to AppConfig. Update these values
-in `terraform.tfvars`, then run `terraform apply`:
+The TLS override path does not use an on-host allowlist or synchronous DNS
+revalidation policy. It forwards to the SNI-derived upstream using the rendered
+nginx resolver config and emits override observations for async detection.
 
-- `nginx_allowed_snis`
+Terraform publishes AppConfig policy for the proxy resolver config and for the
+experimental cleartext HTTP Host/original-dst listener on port 80. Update these
+values in `terraform.tfvars`, then run `terraform apply`:
+
+- `http_allowed_hosts`
 - `proxy_public_dns_resolvers`
-- `proxy_dns_queries_per_sni`
-- `proxy_enforcement_mode`
-- `proxy_metrics_publish_interval_seconds`
+- `http_dns_queries_per_host`
+- `http_enforcement_mode`
 
-The proxy refresh timer reads the deployed AppConfig version through the local
+The refresh timer reads the deployed AppConfig version through the local
 AppConfig Agent and reloads nginx only if rendered runtime files changed.
 
 ### 6. Rule Generator
