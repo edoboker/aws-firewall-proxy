@@ -1,9 +1,10 @@
 # lambda_bench
 
-Measures how the IP-fallback Lambda (`terraform/lambda_ip_fallback.tf`) scales
-as the number of FQDNs it must resolve grows. The Lambda resolves each FQDN to
-IPv4 answers and republishes a managed VPC prefix list; this benchmark times
-that work at 10, 50, 100, 150, 200, 250, and 300 FQDNs and plots the result.
+Measures how the ruleset-generator Lambda
+(`terraform/lambda_ruleset_generator.tf`) scales as the number of FQDNs it must
+resolve grows. The Lambda resolves each FQDN to IPv4 answers and republishes
+managed VPC prefix lists; this benchmark times that work at 10, 50, 100, 150,
+200, 250, and 300 FQDNs and plots the result.
 
 ## What each step does
 
@@ -49,9 +50,8 @@ restored in a `finally`.
 
 ## Prerequisites
 
-- `enable_lambda_ip_fallback = true` and a successful `terraform apply` so the
-  lambda + prefix list exist (the `lambda_ip_fallback_function_name` and
-  `lambda_ip_fallback_prefix_list_id` outputs are non-null).
+- `enable_ruleset_generator = true` and a successful `terraform apply` so the
+  Lambda exists (the `ruleset_generator_function_name` output is non-null).
 - AWS credentials with `lambda:GetFunctionConfiguration`,
   `lambda:UpdateFunctionConfiguration`, `lambda:InvokeFunction`,
   `ec2:CreateManagedPrefixList`, `ec2:DeleteManagedPrefixList`, and

@@ -1,10 +1,10 @@
-"""Curated list of well-known, reliably-resolvable FQDNs for the lambda
-IP-fallback scaling benchmark.
+"""Curated list of well-known, reliably-resolvable FQDNs for the
+ruleset-generator Lambda scaling benchmark.
 
-The fallback Lambda raises (and the invoke fails) if *any* FQDN returns no
-IPv4 answer, so this list deliberately sticks to large, globally-anycast,
-A-record-having domains. Order is stable: step N uses DOMAINS[:N], so the
-small steps are a strict subset of the large ones.
+The ruleset-generator Lambda raises (and the invoke fails) if *any* FQDN
+returns no IPv4 answer, so this list deliberately sticks to large,
+globally-anycast, A-record-having domains. Order is stable: step N uses
+DOMAINS[:N], so the small steps are a strict subset of the large ones.
 """
 
 # ~320 entries -> headroom above the largest benchmark step (300).

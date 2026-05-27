@@ -1,7 +1,8 @@
-"""Lambda IP-fallback scaling benchmark.
+"""Ruleset-generator Lambda scaling benchmark.
 
-Measures how long the fallback Lambda (terraform/lambda_ip_fallback.tf) takes
-to resolve a growing set of FQDNs and republish the managed prefix list.
+Measures how long the ruleset-generator Lambda
+(terraform/lambda_ruleset_generator.tf) takes to resolve a growing set of FQDNs
+and republish managed prefix lists.
 
 For each step in --steps (default 10, 50, 100, 150, 200, 250, 300):
 
@@ -142,7 +143,7 @@ def create_scratch_prefix_list(ec2, name: str, max_entries: int) -> str:
         PrefixListName=name,
         MaxEntries=max_entries,
         AddressFamily="IPv4",
-        TagSpecifications=[{"ResourceType": "prefix-list", "Tags": [{"Key": "purpose", "Value": "lambda_bench"}]}],
+        TagSpecifications=[{"ResourceType": "prefix-list", "Tags": [{"Key": "purpose", "Value": "ruleset_generator_bench"}]}],
     )["PrefixList"]
     prefix_list_id = pl["PrefixListId"]
     wait_prefix_list_stable(ec2, prefix_list_id)
@@ -245,7 +246,7 @@ def write_outputs(out_dir: Path, results: list[StepResult], addr: int) -> None:
     )
 
     lines = [
-        "# Lambda IP-fallback scaling benchmark",
+        "# Ruleset-generator Lambda scaling benchmark",
         "",
         f"- Addresses published per FQDN: {addr}",
         f"- Lambda timeout during benchmark: {BENCH_LAMBDA_TIMEOUT_S}s",
@@ -293,7 +294,7 @@ def _plot(out_dir: Path, results: list[StepResult]) -> None:
     ax.plot(xs, ys, marker="o")
     ax.set_xlabel("Number of FQDNs")
     ax.set_ylabel("Lambda execution time (ms)")
-    ax.set_title("IP-fallback lambda: resolve + publish time vs FQDN count")
+    ax.set_title("Ruleset-generator lambda: resolve + publish time vs FQDN count")
     ax.grid(True, alpha=0.3)
     for x, y in zip(xs, ys):
         ax.annotate(f"{y:.0f}", (x, y), textcoords="offset points", xytext=(0, 8), ha="center", fontsize=8)
@@ -375,12 +376,12 @@ def main() -> int:
         )
 
     outputs = load_tf_outputs()
-    fn_name = outputs.get("lambda_ip_fallback_function_name")
+    fn_name = outputs.get("ruleset_generator_function_name")
     region = outputs.get("aws_region")
     if not fn_name:
         print(
-            "ERROR: lambda_ip_fallback_function_name output is null. "
-            "Set enable_lambda_ip_fallback = true and `terraform apply` first.",
+            "ERROR: ruleset_generator_function_name output is null. "
+            "Set enable_ruleset_generator = true and `terraform apply` first.",
             file=sys.stderr,
         )
         return 2
@@ -400,7 +401,7 @@ def main() -> int:
     # each modify settles in seconds instead of waiting minutes on the ANF rule
     # group to re-consume the firewall-attached list. The real list is never
     # touched.
-    scratch_name = f"lambda-bench-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
+    scratch_name = f"ruleset-generator-bench-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
     print(f"Creating scratch prefix list {scratch_name} (max {needed_entries} entries)...")
     scratch_id = create_scratch_prefix_list(ec2, scratch_name, needed_entries)
     print(f"  {scratch_id}")

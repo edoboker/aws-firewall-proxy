@@ -22,7 +22,7 @@ submission keeps only what matches the current README architecture.
   `...handshake.3`), 60 footnote links all "accessed on May 25, 2026", title
   wrapped in literal markdown asterisks, **filename has spaces**. Titled
   "Research *Plan*" but it's a finished report.
-- [ ] **`docs/observability-v3.md`** — Untitled raw bullet-dump (no `#`
+- [x] **`docs/observability-v3.md`** — Untitled raw bullet-dump (no `#`
   heading), reads like scratch notes. "v3" implies a v1/v2 that don't exist; the
   real doc is `observability.md`.
 
@@ -148,20 +148,20 @@ describe rejected or never-built designs and confuse what's real.
 
 ## G. Minor / judgment calls
 
-- [ ] **`benchmark/lambda_bench/`** (run.py docstring + README) — Reference
+- [x] **`benchmark/lambda_bench/`** (run.py docstring + README) — Reference
   `terraform/lambda_ip_fallback.tf`, renamed to `lambda_ruleset_generator.tf`.
   Doc-stale (the `FQDNS` env var it pokes still matches, so not broken).
-- [ ] **`benchmark/lambda_bench/` naming drift** — The benchmark still refers to
+- [x] **`benchmark/lambda_bench/` naming drift** — The benchmark still refers to
   old Terraform outputs/config such as `lambda_ip_fallback_function_name`,
   `lambda_ip_fallback_prefix_list_id`, and `enable_lambda_ip_fallback`. Rename to
   the current ruleset-generator outputs/config if this benchmark is kept.
-- [ ] **`benchmark/workload_bench/results/sample/summary.md`** — Committed
+- [x] **`benchmark/workload_bench/results/sample/summary.md`** — Committed
   "illustrative" (made-up) benchmark numbers. Honestly labeled, low concern.
-- [ ] **Generated/local artifacts** — Check whether `tests/.venv/`,
+- [x] **Generated/local artifacts** — Check whether `tests/.venv/`,
   `__pycache__/`, non-sample benchmark result directories, and other generated
   outputs are ignored and untracked. If any are tracked, remove them from git
   while preserving local working copies as needed.
-- [ ] **Experimental HTTP path** (`8081` + `check_http_host.lua`) — Half-finished
+- [x] **Experimental HTTP path** (`8081` + `check_http_host.lua`) — Half-finished
   prototype baked into the AMI but undocumented in the README (README is
   TLS-only). Not dead, but an incomplete feature in the submission — conscious
   keep/cut decision.
